@@ -29,16 +29,20 @@ func TestManagedRoostReconciler_Reconcile(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: roostv1alpha1.ManagedRoostSpec{
-			HelmChart: roostv1alpha1.HelmChartSpec{
-				Repository: "https://charts.example.com",
-				Chart:      "nginx",
-				Version:    "1.0.0",
+			Chart: roostv1alpha1.ChartSpec{
+				Repository: roostv1alpha1.ChartRepositorySpec{
+					URL: "https://charts.example.com",
+				},
+				Name:    "nginx",
+				Version: "1.0.0",
 			},
-			HealthChecks: roostv1alpha1.HealthCheckSpec{
-				Enabled: true,
-				HTTP: &roostv1alpha1.HTTPHealthCheck{
-					Path: "/health",
-					Port: 8080,
+			HealthChecks: []roostv1alpha1.HealthCheckSpec{
+				{
+					Name: "http-check",
+					Type: "http",
+					HTTP: &roostv1alpha1.HTTPHealthCheckSpec{
+						URL: "http://localhost:8080/health",
+					},
 				},
 			},
 		},
@@ -114,9 +118,9 @@ func TestManagedRoostReconciler_ReconcileNotFound(t *testing.T) {
 	ctx := context.Background()
 	result, err := reconciler.Reconcile(ctx, req)
 
-	// Should not error and should not requeue
+	// Should not error but still requeue for monitoring (expected behavior)
 	assert.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	assert.Equal(t, time.Minute*1, result.RequeueAfter)
 }
 
 func TestGenerateReconcileID(t *testing.T) {

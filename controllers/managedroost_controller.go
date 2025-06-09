@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	roostv1alpha1 "github.com/birbparty/roost-keeper/api/v1alpha1"
 	"github.com/birbparty/roost-keeper/internal/telemetry"
@@ -164,10 +165,15 @@ func (r *ManagedRoostReconciler) doReconcile(ctx context.Context, req ctrl.Reque
 	return nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// SetupWithManager sets up the controller with the Manager with enterprise configuration.
 func (r *ManagedRoostReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	recoverPanic := true
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&roostv1alpha1.ManagedRoost{}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: 10,            // Enterprise concurrency setting
+			RecoverPanic:            &recoverPanic, // Enable panic recovery for stability
+		}).
 		Complete(r)
 }
 

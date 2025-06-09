@@ -1,0 +1,83 @@
+# permissions for end users to edit managedroosts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: managedroost-editor-role
+rules:
+- apiGroups:
+  - roost.birb.party
+  resources:
+  - managedroosts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - roost.birb.party
+  resources:
+  - managedroosts/status
+  verbs:
+  - get
+---
+# permissions for end users to view managedroosts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: managedroost-viewer-role
+rules:
+- apiGroups:
+  - roost.birb.party
+  resources:
+  - managedroosts
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - roost.birb.party
+  resources:
+  - managedroosts/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: roost-keeper-leader-election-role
+  namespace: roost-keeper-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
