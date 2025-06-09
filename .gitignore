@@ -27,6 +27,36 @@ go.work.sum
 # env file
 .env
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# Operator specific
+bin/
+testbin/
+*.coverprofile
+
+# Kubernetes artifacts
+config/crd/bases/*.yaml
+config/rbac/role.yaml
+config/webhook/*.yaml
+
+# OTEL and observability
+observability/data/
+*.trace
+*.metrics
+logs/
+
+# Development
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Certificates and secrets
+*.key
+*.crt
+*.pem
+tls/
+
+# Container and deployment
+Dockerfile.cross
+
+# AI agent prompts (keep local only)
+proompts/

@@ -1,0 +1,111 @@
+# OpenTelemetry Collector configuration for Roost-Keeper operator
+# Integrates with local SigNoz stack for development and production observability
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - http://localhost:3301  # SigNoz UI
+            - https://roost.birb.party
+
+  # Prometheus metrics from operator
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'roost-keeper-operator'
+          static_configs:
+            - targets: ['localhost:8080']
+          metrics_path: /metrics
+          scrape_interval: 15s
+
+  # Host metrics for operator node
+  hostmetrics:
+    collection_interval: 10s
+    scrapers:
+      cpu:
+      disk:
+      filesystem:
+      memory:
+      network:
+      process:
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  # Add resource attributes for operator identification
+  resource:
+    attributes:
+      - key: service.name
+        value: roost-keeper
+        action: upsert
+      - key: service.version
+        value: v0.1.0
+        action: upsert
+      - key: service.namespace
+        value: roost.birb.party
+        action: upsert
+      - key: deployment.environment
+        from_attribute: DEPLOYMENT_ENVIRONMENT
+        action: upsert
+
+  # Memory limiter to prevent OOM
+  memory_limiter:
+    limit_mib: 256
+
+exporters:
+  # Export to SigNoz for development
+  otlp/signoz:
+    endpoint: http://localhost:4317
+    tls:
+      insecure: true
+
+  # Export to production SigNoz (when available)
+  otlp/production:
+    endpoint: ${SIGNOZ_ENDPOINT:-http://localhost:4317}
+    tls:
+      insecure: ${SIGNOZ_INSECURE:-true}
+    headers:
+      signoz-access-token: ${SIGNOZ_TOKEN:-""}
+
+  # Prometheus export for metrics
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: roost_keeper
+    const_labels:
+      operator: roost-keeper
+
+  # Debug logging
+  logging:
+    loglevel: info
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/signoz, logging]
+
+    metrics:
+      receivers: [otlp, prometheus, hostmetrics]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/signoz, prometheus, logging]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/signoz, logging]
+
+  extensions: []
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888

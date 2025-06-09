@@ -1,0 +1,53 @@
+apiVersion: roost.birb.party/v1alpha1
+kind: ManagedRoost
+metadata:
+  labels:
+    app.kubernetes.io/name: managedroost
+    app.kubernetes.io/instance: managedroost-sample
+    app.kubernetes.io/part-of: roost-keeper
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: roost-keeper
+  name: managedroost-sample
+  namespace: default
+spec:
+  helmChart:
+    repository: "https://charts.bitnami.com/bitnami"
+    chart: "nginx"
+    version: "13.2.23"
+    values:
+      service:
+        type: ClusterIP
+      replicaCount: 1
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+  healthChecks:
+    enabled: true
+    http:
+      path: "/"
+      port: 8080
+      scheme: "HTTP"
+      timeout: 10s
+      interval: 30s
+      headers:
+        User-Agent: "roost-keeper-health-check"
+    kubernetes:
+      resources:
+        - apiVersion: "apps/v1"
+          kind: "Deployment"
+          labelSelector:
+            app.kubernetes.io/name: nginx
+          conditions:
+            - type: "Available"
+              status: "True"
+      timeout: 60s
+      interval: 30s
+  teardownPolicy:
+    triggerCondition: HealthFailure
+    gracePeriod: 300s
+    preserveResources:
+      - "persistentvolumeclaims"
