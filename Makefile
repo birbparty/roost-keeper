@@ -126,12 +126,20 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUBECTL ?= kubectl
+CONTROLLER_GEN = $(LOCALBIN)/controller-gen
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 GOSEC = $(LOCALBIN)/gosec
 
 ## Tool Versions
+CONTROLLER_TOOLS_VERSION ?= v0.18.0
 GOLANGCI_LINT_VERSION ?= v1.55.2
 GOSEC_VERSION ?= v2.19.0
+
+.PHONY: controller-gen
+controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
+$(CONTROLLER_GEN): $(LOCALBIN)
+	test -s $(LOCALBIN)/controller-gen && $(LOCALBIN)/controller-gen --version | grep -q $(CONTROLLER_TOOLS_VERSION) || \
+	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
@@ -205,6 +213,43 @@ verify-imports: ## Verify no unused imports
 .PHONY: verify-all
 verify-all: verify-deps verify-build fmt vet lint security test ## Run all verification checks
 
+##@ CRD Management
+
+.PHONY: manifests
+manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+
+.PHONY: generate
+generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
+
+.PHONY: validate-crd
+validate-crd: manifests ## Validate CRD against Kubernetes schema
+	@echo "Validating CRD manifests..."
+	@if command -v kubectl &> /dev/null; then \
+		kubectl --dry-run=client apply -f config/crd/bases/ >/dev/null 2>&1 && echo "✅ CRD validation passed" || echo "❌ CRD validation failed"; \
+	else \
+		echo "kubectl not found, skipping CRD validation"; \
+	fi
+
+.PHONY: install-crd
+install-crd: manifests ## Install CRDs into the cluster
+	kubectl apply -f config/crd/bases/
+
+.PHONY: uninstall-crd
+uninstall-crd: ## Uninstall CRDs from the cluster
+	kubectl delete -f config/crd/bases/ --ignore-not-found=true
+
+.PHONY: apply-samples
+apply-samples: ## Apply sample ManagedRoost resources
+	kubectl apply -f config/samples/simple_managedroost.yaml
+	kubectl apply -f config/samples/complex_managedroost.yaml
+
+.PHONY: delete-samples
+delete-samples: ## Delete sample ManagedRoost resources
+	kubectl delete -f config/samples/simple_managedroost.yaml --ignore-not-found=true
+	kubectl delete -f config/samples/complex_managedroost.yaml --ignore-not-found=true
+
 ##@ Documentation
 
 .PHONY: docs
@@ -214,6 +259,13 @@ docs: ## Generate API documentation
 	@echo "# Roost-Keeper API Documentation" > docs/api/README.md
 	@echo "" >> docs/api/README.md
 	@echo "This directory contains generated API documentation." >> docs/api/README.md
+
+.PHONY: api-docs
+api-docs: controller-gen ## Generate API reference documentation
+	@echo "Generating API reference documentation..."
+	@mkdir -p docs/api
+	$(CONTROLLER_GEN) crd:generateEmbeddedObjectMeta=true paths="./api/..." output:stdout > docs/api/managedroost-crd.yaml
+	@echo "API reference generated: docs/api/managedroost-crd.yaml"
 
 ##@ Helm Development
 

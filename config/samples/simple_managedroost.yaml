@@ -1,0 +1,39 @@
+apiVersion: roost.birb.party/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: simple-nginx-roost
+  namespace: development
+  labels:
+    environment: dev
+    app: nginx
+spec:
+  chart:
+    repository:
+      url: https://kubernetes.github.io/ingress-nginx
+      type: http
+    name: ingress-nginx
+    version: "4.8.3"
+    values:
+      inline: |
+        controller:
+          replicaCount: 1
+          service:
+            type: NodePort
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+  healthChecks:
+    - name: http-readiness
+      type: http
+      http:
+        url: "http://nginx-service.development.svc.cluster.local/healthz"
+        method: GET
+        expectedCodes: [200]
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 3
+  teardownPolicy:
+    triggers:
+      - type: timeout
+        timeout: 2h

@@ -1,0 +1,151 @@
+apiVersion: roost.birb.party/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: complex-microservice-roost
+  namespace: staging
+  labels:
+    tenant: team-alpha
+    environment: staging
+    cost-center: engineering
+spec:
+  chart:
+    repository:
+      url: oci://registry.company.com/helm-charts
+      type: oci
+      auth:
+        secretRef:
+          name: registry-credentials
+          namespace: staging
+    name: microservice-stack
+    version: ">=1.2.0 <2.0.0"
+    values:
+      configMapRefs:
+        - name: base-config
+          key: values.yaml
+          namespace: staging
+      secretRefs:
+        - name: database-credentials
+          key: db-config.yaml
+          namespace: staging
+      template:
+        enabled: true
+        context:
+          environment: staging
+          replicas: "3"
+    upgradePolicy:
+      timeout: 600s
+      atomic: true
+      cleanupOnFail: true
+  healthChecks:
+    - name: api-health
+      type: http
+      http:
+        url: "https://api.staging.company.com/health"
+        method: GET
+        headers:
+          Authorization: "Bearer {{.Secret.api-token}}"
+        expectedCodes: [200, 202]
+      interval: 30s
+      timeout: 10s
+      weight: 50
+    - name: database-connectivity
+      type: tcp
+      tcp:
+        host: "postgres.staging.svc.cluster.local"
+        port: 5432
+      interval: 60s
+      timeout: 5s
+      weight: 30
+    - name: metrics-endpoint
+      type: prometheus
+      prometheus:
+        query: 'up{job="microservice-metrics"}'
+        threshold: 1
+        operator: gte
+        endpoint: "http://prometheus.monitoring.svc.cluster.local:9090"
+      interval: 45s
+      weight: 20
+  teardownPolicy:
+    triggers:
+      - type: failure_count
+        failureCount: 10
+      - type: resource_threshold
+        resourceThreshold:
+          memory: "2Gi"
+          cpu: "1000m"
+      - type: schedule
+        schedule: "0 2 * * *"  # Daily at 2 AM
+    requireManualApproval: false
+    dataPreservation:
+      enabled: true
+      backupPolicy:
+        schedule: "0 1 * * *"
+        retention: "7d"
+        storage:
+          type: s3
+          config:
+            bucket: company-backups
+            region: us-west-2
+      preserveResources:
+        - "persistentvolumeclaims"
+        - "secrets"
+  tenancy:
+    tenantId: "team-alpha"
+    namespaceIsolation:
+      enabled: true
+      prefix: "team-alpha"
+      labels:
+        team: alpha
+        isolation: enabled
+    rbac:
+      enabled: true
+      serviceAccount: "team-alpha-roost-sa"
+      clusterRoles:
+        - "team-alpha-cluster-role"
+      roles:
+        - "team-alpha-namespace-role"
+    networkPolicy:
+      enabled: true
+      ingress:
+        - from:
+            - namespaceSelector:
+                team: alpha
+          ports:
+            - protocol: TCP
+              port: 8080
+    resourceQuota:
+      enabled: true
+      hard:
+        requests.cpu: "4"
+        requests.memory: "8Gi"
+        persistentvolumeclaims: "10"
+  observability:
+    metrics:
+      enabled: true
+      interval: 15s
+      custom:
+        - name: request_rate
+          query: 'rate(http_requests_total[5m])'
+          type: gauge
+    tracing:
+      enabled: true
+      samplingRate: 0.1
+      endpoint:
+        url: "http://jaeger-collector.tracing.svc.cluster.local:14268/api/traces"
+        auth:
+          headers:
+            X-API-Key: "{{.Secret.tracing-key}}"
+    logging:
+      level: info
+      structured: true
+      outputs:
+        - type: http
+          config:
+            url: "https://logs.company.com/api/v1/logs"
+            format: json
+  metadata:
+    owner: "team-alpha@company.com"
+    project: "microservice-modernization"
+    jira-ticket: "PROJ-1234"
+    cost-center: "engineering"
+    compliance: "sox-compliant"
