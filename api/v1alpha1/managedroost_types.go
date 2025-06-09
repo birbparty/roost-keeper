@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -14,9 +15,6 @@ type ManagedRoostSpec struct {
 
 	// HealthChecks defines the health check configuration
 	HealthChecks HealthCheckSpec `json:"healthChecks"`
-
-	// TeardownPolicy specifies when and how to tear down the deployment
-	TeardownPolicy TeardownPolicySpec `json:"teardownPolicy"`
 
 	// Namespace specifies the target namespace for the Helm deployment
 	// +optional
@@ -34,44 +32,9 @@ type HelmChartSpec struct {
 	// Version is the version of the Helm chart
 	Version string `json:"version"`
 
-	// Values are the Helm values to use for the deployment
+	// Values are the Helm values to use for the deployment as raw JSON
 	// +optional
-	Values map[string]interface{} `json:"values,omitempty"`
-
-	// ValuesFrom specifies ConfigMap/Secret references for values
-	// +optional
-	ValuesFrom []ValuesReference `json:"valuesFrom,omitempty"`
-}
-
-// ValuesReference defines a reference to a ConfigMap or Secret for Helm values
-type ValuesReference struct {
-	// ConfigMapRef is a reference to a ConfigMap
-	// +optional
-	ConfigMapRef *ConfigMapReference `json:"configMapRef,omitempty"`
-
-	// SecretRef is a reference to a Secret
-	// +optional
-	SecretRef *SecretReference `json:"secretRef,omitempty"`
-}
-
-// ConfigMapReference represents a reference to a ConfigMap
-type ConfigMapReference struct {
-	// Name is the name of the ConfigMap
-	Name string `json:"name"`
-
-	// Key is the key within the ConfigMap
-	// +optional
-	Key string `json:"key,omitempty"`
-}
-
-// SecretReference represents a reference to a Secret
-type SecretReference struct {
-	// Name is the name of the Secret
-	Name string `json:"name"`
-
-	// Key is the key within the Secret
-	// +optional
-	Key string `json:"key,omitempty"`
+	Values string `json:"values,omitempty"`
 }
 
 // HealthCheckSpec defines the health check configuration
@@ -82,30 +45,6 @@ type HealthCheckSpec struct {
 	// HTTP health check configuration
 	// +optional
 	HTTP *HTTPHealthCheck `json:"http,omitempty"`
-
-	// TCP health check configuration
-	// +optional
-	TCP *TCPHealthCheck `json:"tcp,omitempty"`
-
-	// UDP health check configuration
-	// +optional
-	UDP *UDPHealthCheck `json:"udp,omitempty"`
-
-	// GRPC health check configuration
-	// +optional
-	GRPC *GRPCHealthCheck `json:"grpc,omitempty"`
-
-	// Prometheus health check configuration
-	// +optional
-	Prometheus *PrometheusHealthCheck `json:"prometheus,omitempty"`
-
-	// Kubernetes native health check configuration
-	// +optional
-	Kubernetes *KubernetesHealthCheck `json:"kubernetes,omitempty"`
-
-	// Composite health check configuration
-	// +optional
-	Composite *CompositeHealthCheck `json:"composite,omitempty"`
 }
 
 // HTTPHealthCheck defines HTTP-based health checking
@@ -119,182 +58,7 @@ type HTTPHealthCheck struct {
 	// Scheme is the HTTP scheme (HTTP or HTTPS)
 	// +optional
 	Scheme string `json:"scheme,omitempty"`
-
-	// Headers are additional HTTP headers to send
-	// +optional
-	Headers map[string]string `json:"headers,omitempty"`
-
-	// Timeout is the timeout for the health check
-	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
-
-	// Interval is the interval between health checks
-	// +optional
-	Interval metav1.Duration `json:"interval,omitempty"`
 }
-
-// TCPHealthCheck defines TCP-based health checking
-type TCPHealthCheck struct {
-	// Port is the port to check
-	Port int32 `json:"port"`
-
-	// Timeout is the timeout for the health check
-	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
-
-	// Interval is the interval between health checks
-	// +optional
-	Interval metav1.Duration `json:"interval,omitempty"`
-}
-
-// UDPHealthCheck defines UDP-based health checking
-type UDPHealthCheck struct {
-	// Port is the port to check
-	Port int32 `json:"port"`
-
-	// Timeout is the timeout for the health check
-	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
-
-	// Interval is the interval between health checks
-	// +optional
-	Interval metav1.Duration `json:"interval,omitempty"`
-}
-
-// GRPCHealthCheck defines gRPC-based health checking
-type GRPCHealthCheck struct {
-	// Port is the port to check
-	Port int32 `json:"port"`
-
-	// Service is the gRPC service name to check
-	// +optional
-	Service string `json:"service,omitempty"`
-
-	// Timeout is the timeout for the health check
-	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
-
-	// Interval is the interval between health checks
-	// +optional
-	Interval metav1.Duration `json:"interval,omitempty"`
-}
-
-// PrometheusHealthCheck defines Prometheus-based health checking
-type PrometheusHealthCheck struct {
-	// Endpoint is the Prometheus metrics endpoint
-	Endpoint string `json:"endpoint"`
-
-	// Query is the PromQL query to evaluate
-	Query string `json:"query"`
-
-	// Threshold is the threshold for the health check
-	Threshold float64 `json:"threshold"`
-
-	// Timeout is the timeout for the health check
-	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
-
-	// Interval is the interval between health checks
-	// +optional
-	Interval metav1.Duration `json:"interval,omitempty"`
-}
-
-// KubernetesHealthCheck defines Kubernetes-native health checking
-type KubernetesHealthCheck struct {
-	// Resources specifies the Kubernetes resources to monitor
-	Resources []ResourceHealthCheck `json:"resources"`
-
-	// Timeout is the timeout for the health check
-	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
-
-	// Interval is the interval between health checks
-	// +optional
-	Interval metav1.Duration `json:"interval,omitempty"`
-}
-
-// ResourceHealthCheck defines health checking for a specific Kubernetes resource
-type ResourceHealthCheck struct {
-	// APIVersion is the API version of the resource
-	APIVersion string `json:"apiVersion"`
-
-	// Kind is the kind of the resource
-	Kind string `json:"kind"`
-
-	// Name is the name of the resource
-	// +optional
-	Name string `json:"name,omitempty"`
-
-	// LabelSelector is the label selector for the resources
-	// +optional
-	LabelSelector map[string]string `json:"labelSelector,omitempty"`
-
-	// Conditions are the conditions to check
-	// +optional
-	Conditions []ConditionCheck `json:"conditions,omitempty"`
-}
-
-// ConditionCheck defines a condition to check on a Kubernetes resource
-type ConditionCheck struct {
-	// Type is the condition type
-	Type string `json:"type"`
-
-	// Status is the expected condition status
-	Status string `json:"status"`
-}
-
-// CompositeHealthCheck defines composite health checking logic
-type CompositeHealthCheck struct {
-	// Logic defines the composite logic (AND, OR)
-	Logic CompositeLogic `json:"logic"`
-
-	// Checks are the individual health checks to combine
-	Checks []string `json:"checks"`
-
-	// Timeout is the timeout for the health check
-	// +optional
-	Timeout metav1.Duration `json:"timeout,omitempty"`
-
-	// Interval is the interval between health checks
-	// +optional
-	Interval metav1.Duration `json:"interval,omitempty"`
-}
-
-// CompositeLogic defines the logic for combining health checks
-type CompositeLogic string
-
-const (
-	// CompositeLogicAND requires all health checks to pass
-	CompositeLogicAND CompositeLogic = "AND"
-	// CompositeLogicOR requires at least one health check to pass
-	CompositeLogicOR CompositeLogic = "OR"
-)
-
-// TeardownPolicySpec defines the teardown policy
-type TeardownPolicySpec struct {
-	// TriggerCondition specifies when to trigger teardown
-	TriggerCondition TeardownTrigger `json:"triggerCondition"`
-
-	// GracePeriod is the grace period before forced teardown
-	// +optional
-	GracePeriod metav1.Duration `json:"gracePeriod,omitempty"`
-
-	// PreserveResources specifies which resources to preserve during teardown
-	// +optional
-	PreserveResources []string `json:"preserveResources,omitempty"`
-}
-
-// TeardownTrigger defines when to trigger teardown
-type TeardownTrigger string
-
-const (
-	// TeardownTriggerHealthFailure triggers teardown on health check failure
-	TeardownTriggerHealthFailure TeardownTrigger = "HealthFailure"
-	// TeardownTriggerManual requires manual teardown
-	TeardownTriggerManual TeardownTrigger = "Manual"
-	// TeardownTriggerTTL triggers teardown after a time-to-live period
-	TeardownTriggerTTL TeardownTrigger = "TTL"
-)
 
 // ManagedRoostStatus defines the observed state of ManagedRoost
 type ManagedRoostStatus struct {
@@ -303,12 +67,6 @@ type ManagedRoostStatus struct {
 
 	// Conditions represent the current service state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// HelmRelease contains information about the Helm release
-	HelmRelease *HelmReleaseStatus `json:"helmRelease,omitempty"`
-
-	// HealthStatus contains the current health status
-	HealthStatus *HealthStatus `json:"healthStatus,omitempty"`
 
 	// ObservedGeneration reflects the generation most recently observed by the controller
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -329,73 +87,12 @@ const (
 	ManagedRoostPhaseReady ManagedRoostPhase = "Ready"
 	// ManagedRoostPhaseFailed indicates the ManagedRoost has failed
 	ManagedRoostPhaseFailed ManagedRoostPhase = "Failed"
-	// ManagedRoostPhaseTearingDown indicates the ManagedRoost is being torn down
-	ManagedRoostPhaseTearingDown ManagedRoostPhase = "TearingDown"
 )
-
-// HelmReleaseStatus contains information about the Helm release
-type HelmReleaseStatus struct {
-	// Name is the name of the Helm release
-	Name string `json:"name"`
-
-	// Namespace is the namespace of the Helm release
-	Namespace string `json:"namespace"`
-
-	// Version is the version of the Helm release
-	Version int `json:"version"`
-
-	// Status is the status of the Helm release
-	Status string `json:"status"`
-
-	// LastDeployed is the time the release was last deployed
-	LastDeployed metav1.Time `json:"lastDeployed,omitempty"`
-
-	// Notes contains the release notes
-	Notes string `json:"notes,omitempty"`
-}
-
-// HealthStatus contains the current health status
-type HealthStatus struct {
-	// Overall health status
-	Overall HealthStatusValue `json:"overall"`
-
-	// Individual health check results
-	Checks map[string]HealthCheckResult `json:"checks,omitempty"`
-
-	// LastHealthCheck is the time of the last health check
-	LastHealthCheck metav1.Time `json:"lastHealthCheck,omitempty"`
-}
-
-// HealthStatusValue defines health status values
-type HealthStatusValue string
-
-const (
-	// HealthStatusHealthy indicates healthy status
-	HealthStatusHealthy HealthStatusValue = "Healthy"
-	// HealthStatusUnhealthy indicates unhealthy status
-	HealthStatusUnhealthy HealthStatusValue = "Unhealthy"
-	// HealthStatusUnknown indicates unknown health status
-	HealthStatusUnknown HealthStatusValue = "Unknown"
-)
-
-// HealthCheckResult contains the result of a health check
-type HealthCheckResult struct {
-	// Status is the health check status
-	Status HealthStatusValue `json:"status"`
-
-	// Message contains additional information about the health check
-	Message string `json:"message,omitempty"`
-
-	// LastCheck is the time of the last check
-	LastCheck metav1.Time `json:"lastCheck"`
-}
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:scope=Namespaced
 //+kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
-//+kubebuilder:printcolumn:name="Health",type="string",JSONPath=".status.healthStatus.overall"
-//+kubebuilder:printcolumn:name="Helm Release",type="string",JSONPath=".status.helmRelease.name"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // ManagedRoost is the Schema for the managedroosts API
@@ -414,6 +111,155 @@ type ManagedRoostList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ManagedRoost `json:"items"`
+}
+
+// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+func (in *ManagedRoost) DeepCopyInto(out *ManagedRoost) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ManagedRoost.
+func (in *ManagedRoost) DeepCopy() *ManagedRoost {
+	if in == nil {
+		return nil
+	}
+	out := new(ManagedRoost)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject is an autogenerated deepcopy function, copying the receiver, creating a new runtime.Object.
+func (in *ManagedRoost) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+func (in *ManagedRoostList) DeepCopyInto(out *ManagedRoostList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]ManagedRoost, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ManagedRoostList.
+func (in *ManagedRoostList) DeepCopy() *ManagedRoostList {
+	if in == nil {
+		return nil
+	}
+	out := new(ManagedRoostList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject is an autogenerated deepcopy function, copying the receiver, creating a new runtime.Object.
+func (in *ManagedRoostList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+func (in *ManagedRoostSpec) DeepCopyInto(out *ManagedRoostSpec) {
+	*out = *in
+	in.HelmChart.DeepCopyInto(&out.HelmChart)
+	in.HealthChecks.DeepCopyInto(&out.HealthChecks)
+}
+
+// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ManagedRoostSpec.
+func (in *ManagedRoostSpec) DeepCopy() *ManagedRoostSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ManagedRoostSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+func (in *ManagedRoostStatus) DeepCopyInto(out *ManagedRoostStatus) {
+	*out = *in
+	if in.Conditions != nil {
+		in, out := &in.Conditions, &out.Conditions
+		*out = make([]metav1.Condition, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	in.LastReconcileTime.DeepCopyInto(&out.LastReconcileTime)
+}
+
+// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new ManagedRoostStatus.
+func (in *ManagedRoostStatus) DeepCopy() *ManagedRoostStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(ManagedRoostStatus)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+func (in *HelmChartSpec) DeepCopyInto(out *HelmChartSpec) {
+	*out = *in
+}
+
+// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new HelmChartSpec.
+func (in *HelmChartSpec) DeepCopy() *HelmChartSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(HelmChartSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+func (in *HealthCheckSpec) DeepCopyInto(out *HealthCheckSpec) {
+	*out = *in
+	if in.HTTP != nil {
+		in, out := &in.HTTP, &out.HTTP
+		*out = new(HTTPHealthCheck)
+		**out = **in
+	}
+}
+
+// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new HealthCheckSpec.
+func (in *HealthCheckSpec) DeepCopy() *HealthCheckSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(HealthCheckSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+func (in *HTTPHealthCheck) DeepCopyInto(out *HTTPHealthCheck) {
+	*out = *in
+}
+
+// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new HTTPHealthCheck.
+func (in *HTTPHealthCheck) DeepCopy() *HTTPHealthCheck {
+	if in == nil {
+		return nil
+	}
+	out := new(HTTPHealthCheck)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func init() {

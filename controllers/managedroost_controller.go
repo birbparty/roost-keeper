@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -17,7 +17,7 @@ import (
 type ManagedRoostReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	Logger *zap.Logger
+	Logger logr.Logger
 }
 
 //+kubebuilder:rbac:groups=roost.birb.party,resources=managedroosts,verbs=get;list;watch;create;update;patch;delete
@@ -35,9 +35,9 @@ type ManagedRoostReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *ManagedRoostReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := r.Logger.With(
-		zap.String("managedroost", req.NamespacedName.String()),
-		zap.String("reconcile_id", generateReconcileID()),
+	logger := r.Logger.WithValues(
+		"managedroost", req.NamespacedName.String(),
+		"reconcile_id", generateReconcileID(),
 	)
 
 	// Add logger to context for tracing
@@ -57,14 +57,14 @@ func (r *ManagedRoostReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			logger.Info("ManagedRoost resource not found, likely deleted")
 			return ctrl.Result{}, nil
 		}
-		logger.Error("Failed to get ManagedRoost", zap.Error(err))
+		logger.Error(err, "Failed to get ManagedRoost")
 		return ctrl.Result{}, err
 	}
 
 	logger.Info("Successfully fetched ManagedRoost",
-		zap.String("phase", string(managedRoost.Status.Phase)),
-		zap.Int64("generation", managedRoost.Generation),
-		zap.Int64("observed_generation", managedRoost.Status.ObservedGeneration),
+		"phase", string(managedRoost.Status.Phase),
+		"generation", managedRoost.Generation,
+		"observed_generation", managedRoost.Status.ObservedGeneration,
 	)
 
 	// TODO: Implement reconciliation logic
@@ -77,7 +77,7 @@ func (r *ManagedRoostReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if managedRoost.Status.ObservedGeneration != managedRoost.Generation {
 		managedRoost.Status.ObservedGeneration = managedRoost.Generation
 		if err := r.Status().Update(ctx, &managedRoost); err != nil {
-			logger.Error("Failed to update observed generation", zap.Error(err))
+			logger.Error(err, "Failed to update observed generation")
 			return ctrl.Result{}, err
 		}
 	}

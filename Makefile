@@ -12,9 +12,6 @@ GOBIN=$(shell go env GOBIN)
 endif
 
 # CONTAINER_TOOL defines the container tool to be used for building images.
-# Be aware that the target commands are only tested with Docker which is
-# scaffolded by default. However, you might want to replace it to use other
-# tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
@@ -27,14 +24,6 @@ help: ## Display this help.
 
 ##@ Development
 
-.PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
-
-.PHONY: generate
-generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
-
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...
@@ -44,30 +33,31 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
+test: fmt vet ## Run tests.
+	go test ./... -coverprofile cover.out
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter & yamllint
+lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
+.PHONY: security
+security: gosec ## Run security scan
+	$(GOSEC) ./...
+
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/manager/main.go
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
+run: fmt vet ## Run a controller from your host.
 	go run ./cmd/manager/main.go
 
-# If you wish built the manager image targeting other platforms you can use the --platform flag.
-# (i.e. docker build --platform linux/arm64 ). However, you must enable docker buildKit for it.
-# More info: https://docs.docker.com/develop/dev-best-practices/
 .PHONY: docker-build
 docker-build: test ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
@@ -76,45 +66,25 @@ docker-build: test ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
-# PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - able to use docker buildx . More info: https://docs.docker.com/build/buildx/
-# - have a multi-arch builder. More info: https://docs.docker.com/build/building/multi-platform/
-# - be able to push the image for your registry (i.e. if you do not inform a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
-# To properly provided solutions that supports more than one platform you should use this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
-.PHONY: docker-buildx
-docker-buildx: test ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name project-v3-builder
-	$(CONTAINER_TOOL) buildx use project-v3-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm project-v3-builder
-	rm Dockerfile.cross
+##@ Dependencies
 
-##@ Deployment
+.PHONY: deps
+deps: ## Download and verify dependencies
+	go mod download
+	go mod verify
 
-ifndef ignore-not-found
-  ignore-not-found = false
-endif
+.PHONY: deps-update
+deps-update: ## Update all dependencies
+	go get -u ./...
+	go mod tidy
 
-.PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
+.PHONY: deps-clean
+deps-clean: ## Clean module cache
+	go clean -modcache
 
-.PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
-
-.PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
-
-.PHONY: undeploy
-undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+.PHONY: tidy
+tidy: ## Run go mod tidy
+	go mod tidy
 
 ##@ Observability & Local Development
 
@@ -136,13 +106,6 @@ dev-stack-down: ## Stop local observability stack
 		echo "Local OTEL stack not found at ../local-otel"; \
 	fi
 
-.PHONY: otel-config
-otel-config: ## Generate OTEL configuration files
-	@echo "Generating OTEL configuration files..."
-	@mkdir -p observability/configs
-	@echo "# Generated OTEL Collector configuration for Roost-Keeper" > observability/configs/otel-collector.yaml
-	@echo "# Integration with local SigNoz stack" >> observability/configs/otel-collector.yaml
-
 .PHONY: trace-debug
 trace-debug: ## Debug distributed tracing (requires running operator)
 	@echo "Checking trace endpoints..."
@@ -163,35 +126,12 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUBECTL ?= kubectl
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
-CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
-ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GOSEC = $(LOCALBIN)/gosec
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v5.0.4
-CONTROLLER_TOOLS_VERSION ?= v0.13.0
-GOLANGCI_LINT_VERSION ?= v1.54.2
-
-.PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary. If wrong version is installed, it will be removed before downloading.
-$(KUSTOMIZE): $(LOCALBIN)
-	@if test -x $(LOCALBIN)/kustomize && ! $(LOCALBIN)/kustomize version | grep -q $(KUSTOMIZE_VERSION); then \
-		echo "$(LOCALBIN)/kustomize version is not expected $(KUSTOMIZE_VERSION). Removing it before installing."; \
-		rm -rf $(LOCALBIN)/kustomize; \
-	fi
-	test -s $(LOCALBIN)/kustomize || GOBIN=$(LOCALBIN) GO111MODULE=on go install sigs.k8s.io/kustomize/kustomize/v5@$(KUSTOMIZE_VERSION)
-
-.PHONY: controller-gen
-controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary. If wrong version is installed, it will be removed before downloading.
-$(CONTROLLER_GEN): $(LOCALBIN)
-	test -s $(LOCALBIN)/controller-gen && $(LOCALBIN)/controller-gen --version | grep -q $(CONTROLLER_TOOLS_VERSION) || \
-	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
-
-.PHONY: envtest
-envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
-$(ENVTEST): $(LOCALBIN)
-	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+GOLANGCI_LINT_VERSION ?= v1.55.2
+GOSEC_VERSION ?= v2.19.0
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
@@ -199,29 +139,11 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 	test -s $(LOCALBIN)/golangci-lint && $(LOCALBIN)/golangci-lint version | grep -q $(GOLANGCI_LINT_VERSION) || \
 	GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
-##@ Helm Development
-
-.PHONY: helm-lint
-helm-lint: ## Validate Helm chart configurations (future)
-	@echo "Helm lint functionality - to be implemented in Helm SDK integration phase"
-
-.PHONY: helm-debug
-helm-debug: ## Debug Helm operations (future)
-	@echo "Helm debug functionality - to be implemented in Helm SDK integration phase"
-
-##@ Documentation
-
-.PHONY: docs
-docs: ## Generate API documentation
-	@echo "Generating API documentation..."
-	@mkdir -p docs/api
-	@echo "# Roost-Keeper API Documentation" > docs/api/README.md
-	@echo "" >> docs/api/README.md
-	@echo "This directory will contain generated API documentation." >> docs/api/README.md
-
-.PHONY: docs-serve
-docs-serve: ## Serve documentation locally (future)
-	@echo "Documentation server - to be implemented"
+.PHONY: gosec
+gosec: $(GOSEC) ## Download gosec locally if necessary.
+$(GOSEC): $(LOCALBIN)
+	test -s $(LOCALBIN)/gosec && $(LOCALBIN)/gosec -version | grep -q $(GOSEC_VERSION) || \
+	GOBIN=$(LOCALBIN) go install github.com/securecodewarrior/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
 
 ##@ Testing
 
@@ -230,9 +152,9 @@ test-unit: ## Run unit tests
 	go test -v ./internal/... ./controllers/... -coverprofile=coverage-unit.out
 
 .PHONY: test-integration
-test-integration: envtest ## Run integration tests
+test-integration: ## Run integration tests
 	@echo "Running integration tests..."
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test -v ./test/integration/... -coverprofile=coverage-integration.out
+	go test -v ./test/integration/... -coverprofile=coverage-integration.out
 
 .PHONY: test-e2e
 test-e2e: ## Run end-to-end tests (future)
@@ -245,15 +167,6 @@ test-coverage: test ## Generate test coverage report
 
 ##@ Project Setup
 
-.PHONY: tidy
-tidy: ## Run go mod tidy
-	go mod tidy
-
-.PHONY: deps
-deps: ## Download and verify dependencies
-	go mod download
-	go mod verify
-
 .PHONY: clean
 clean: ## Clean build artifacts
 	rm -rf bin/
@@ -261,7 +174,7 @@ clean: ## Clean build artifacts
 	rm -rf $(LOCALBIN)
 
 .PHONY: setup-dev
-setup-dev: deps controller-gen kustomize envtest golangci-lint ## Set up development environment
+setup-dev: deps golangci-lint gosec ## Set up development environment
 	@echo "Development environment setup complete!"
 	@echo "Available commands:"
 	@echo "  make run          - Run the operator locally"
@@ -269,54 +182,109 @@ setup-dev: deps controller-gen kustomize envtest golangci-lint ## Set up develop
 	@echo "  make dev-stack    - Start observability stack"
 	@echo "  make help         - Show all available targets"
 
-##@ Infrastructure Team Integration
+##@ Verification
 
-.PHONY: infra-request
-infra-request: ## Create infrastructure request for birb-home team
-	@echo "Creating infrastructure request..."
-	@mkdir -p ../birb-home/requests/roost-keeper
-	@cat > ../birb-home/requests/roost-keeper/infrastructure-requirements.md << 'EOF'
-# Roost-Keeper Infrastructure Requirements
+.PHONY: verify-deps
+verify-deps: ## Verify dependency integrity
+	go mod verify
+	go list -m all
 
-## Project Overview
-- **Name**: Roost-Keeper
-- **Type**: Kubernetes Operator
-- **Domain**: roost.birb.party
-- **Repository**: github.com/birbparty/roost-keeper
+.PHONY: verify-build
+verify-build: ## Verify project builds successfully
+	go build ./...
 
-## Infrastructure Needs
+.PHONY: verify-imports
+verify-imports: ## Verify no unused imports
+	@echo "Checking for unused imports..."
+	@if command -v goimports &> /dev/null; then \
+		diff -u <(echo -n) <(goimports -d .); \
+	else \
+		echo "goimports not found, install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+	fi
 
-### DNS Requirements
-- **Primary Domain**: roost.birb.party
-- **Subdomains Needed**:
-  - api.roost.birb.party (API endpoints)
-  - metrics.roost.birb.party (Metrics collection)
-  - docs.roost.birb.party (Documentation)
+.PHONY: verify-all
+verify-all: verify-deps verify-build fmt vet lint security test ## Run all verification checks
 
-### Observability Integration
-- **Current Setup**: Integrating with local-otel stack
-- **Endpoints**: http://localhost:4318 (OTLP), http://localhost:3301 (SigNoz)
-- **Requirements**: Production observability stack for deployed operators
+##@ Documentation
 
-### Container Registry
-- **Images**: roost-keeper operator container images
-- **Registry**: Need access to birbparty container registry
+.PHONY: docs
+docs: ## Generate API documentation
+	@echo "Generating API documentation..."
+	@mkdir -p docs/api
+	@echo "# Roost-Keeper API Documentation" > docs/api/README.md
+	@echo "" >> docs/api/README.md
+	@echo "This directory contains generated API documentation." >> docs/api/README.md
 
-### Kubernetes Cluster Access
-- **RBAC**: CRD management, operator deployment permissions
-- **Namespaces**: roost-keeper-system (operator), various (managed roosts)
+##@ Helm Development
 
-### Security
-- **Certificates**: TLS certificates for roost.birb.party domains
-- **Secrets**: Integration with birb secret management
+.PHONY: helm-lint
+helm-lint: ## Validate Helm chart configurations (future)
+	@echo "Helm lint functionality - to be implemented in Helm SDK integration phase"
 
-## Timeline
-- **Phase 1** (Current): Local development with local-otel
-- **Phase 2**: Staging deployment with production-like infrastructure
-- **Phase 3**: Production deployment
+##@ Enterprise Features
 
-## Contact
-- **Team**: Roost-Keeper Development
-- **Priority**: Medium (development phase)
-EOF
-	@echo "Infrastructure request created at ../birb-home/requests/roost-keeper/infrastructure-requirements.md"
+.PHONY: check-security
+check-security: gosec ## Run comprehensive security checks
+	$(GOSEC) -fmt json -out security-report.json ./...
+	@echo "Security report generated: security-report.json"
+
+.PHONY: check-dependencies
+check-dependencies: ## Check for dependency vulnerabilities
+	@echo "Checking dependencies for vulnerabilities..."
+	@if command -v govulncheck &> /dev/null; then \
+		govulncheck ./...; \
+	else \
+		echo "govulncheck not found, install with: go install golang.org/x/vuln/cmd/govulncheck@latest"; \
+	fi
+
+##@ Release
+
+.PHONY: pre-release
+pre-release: verify-all ## Run pre-release checks
+	@echo "Pre-release verification complete!"
+
+.PHONY: version
+version: ## Show version information
+	@echo "Roost-Keeper Dependency Information:"
+	@echo "Go version: $(shell go version)"
+	@echo "Project: $(shell go list -m)"
+	@echo "Dependencies:"
+	@go list -m all | head -20
+
+##@ Development Workflow
+
+.PHONY: quick-test
+quick-test: ## Quick test for development
+	go test -short ./...
+
+.PHONY: watch
+watch: ## Watch for changes and run tests (requires entr)
+	@if command -v entr &> /dev/null; then \
+		find . -name "*.go" | entr -r make quick-test; \
+	else \
+		echo "entr not found, install with your package manager"; \
+	fi
+
+.PHONY: dev-deps
+dev-deps: ## Install development dependencies
+	@echo "Installing development dependencies..."
+	@go install golang.org/x/tools/cmd/goimports@latest
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
+	@echo "Development dependencies installed!"
+
+##@ CI/CD Support
+
+.PHONY: ci-test
+ci-test: ## CI test target
+	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+.PHONY: ci-lint
+ci-lint: golangci-lint ## CI lint target
+	$(GOLANGCI_LINT) run --timeout=5m
+
+.PHONY: ci-security
+ci-security: gosec ## CI security scan target
+	$(GOSEC) -fmt junit-xml -out security-report.xml ./...
+
+.PHONY: ci-all
+ci-all: ci-test ci-lint ci-security ## Run all CI checks

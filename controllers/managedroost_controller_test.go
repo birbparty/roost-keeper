@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	roostv1alpha1 "github.com/birbparty/roost-keeper/api/v1alpha1"
 	"github.com/birbparty/roost-keeper/internal/telemetry"
@@ -41,9 +40,6 @@ func TestManagedRoostReconciler_Reconcile(t *testing.T) {
 					Path: "/health",
 					Port: 8080,
 				},
-			},
-			TeardownPolicy: roostv1alpha1.TeardownPolicySpec{
-				TriggerCondition: roostv1alpha1.TeardownTriggerManual,
 			},
 		},
 	}
@@ -97,7 +93,8 @@ func TestManagedRoostReconciler_ReconcileNotFound(t *testing.T) {
 		Build()
 
 	// Create logger
-	logger := zap.New(zap.UseDevMode(true))
+	logger, err := telemetry.NewLogger()
+	assert.NoError(t, err)
 
 	// Create reconciler
 	reconciler := &ManagedRoostReconciler{
