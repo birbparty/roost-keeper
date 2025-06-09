@@ -11,6 +11,7 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	zaplib "go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -26,6 +27,8 @@ import (
 
 	roostv1alpha1 "github.com/birbparty/roost-keeper/api/v1alpha1"
 	"github.com/birbparty/roost-keeper/controllers"
+	"github.com/birbparty/roost-keeper/internal/health"
+	"github.com/birbparty/roost-keeper/internal/helm"
 	"github.com/birbparty/roost-keeper/internal/telemetry"
 	//+kubebuilder:scaffold:imports
 )
@@ -209,12 +212,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize ZAP logger for Go packages (used by Helm and health checkers)
+	zapLogger, err := zaplib.NewDevelopment()
+	if err != nil {
+		setupLog.Error(err, "Failed to initialize ZAP logger")
+		os.Exit(1)
+	}
+
+	// Initialize Helm manager
+	helmManager, err := helm.NewManager(mgr.GetClient(), mgr.GetConfig(), zapLogger)
+	if err != nil {
+		setupLog.Error(err, "Failed to initialize Helm manager")
+		os.Exit(1)
+	}
+
+	// Initialize health checker
+	healthChecker := health.NewChecker(zapLogger)
+
 	// Setup controller with enterprise configuration
 	if err = (&controllers.ManagedRoostReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Logger:  logger.WithName("controllers").WithName("ManagedRoost"),
-		Metrics: metrics,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Logger:        logger.WithName("controllers").WithName("ManagedRoost"),
+		Metrics:       metrics,
+		Config:        mgr.GetConfig(),
+		ZapLogger:     zapLogger,
+		HelmManager:   helmManager,
+		HealthChecker: healthChecker,
+		Recorder:      mgr.GetEventRecorderFor("managedroost-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedRoost")
 		os.Exit(1)
