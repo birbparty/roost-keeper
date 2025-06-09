@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -69,7 +70,7 @@ func main() {
 
 	// Initialize OTEL SDK for traces and metrics
 	ctx := context.Background()
-	shutdown, err := telemetry.InitOTEL(ctx)
+	_, shutdown, err := telemetry.InitOTEL(ctx)
 	if err != nil {
 		setupLog.Error(err, "Failed to initialize OTEL SDK")
 		os.Exit(1)
@@ -79,6 +80,20 @@ func main() {
 			setupLog.Error(err, "Failed to shutdown OTEL SDK")
 		}
 	}()
+
+	// Initialize operator metrics
+	metrics, err := telemetry.NewOperatorMetrics()
+	if err != nil {
+		setupLog.Error(err, "Failed to initialize operator metrics")
+		os.Exit(1)
+	}
+
+	// Set operator start time
+	startTime := time.Now()
+	metrics.SetOperatorStartTime(ctx, startTime)
+
+	// Start performance monitoring in the background
+	go telemetry.PerformanceMonitor(ctx, metrics, 30*time.Second)
 
 	// Disable HTTP/2 by default to avoid CVE-2023-44487
 	disableHTTP2 := func(c *tls.Config) {
@@ -124,9 +139,10 @@ func main() {
 	}
 
 	if err = (&controllers.ManagedRoostReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Logger: logger.WithName("controllers").WithName("ManagedRoost"),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Logger:  logger.WithName("controllers").WithName("ManagedRoost"),
+		Metrics: metrics,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedRoost")
 		os.Exit(1)

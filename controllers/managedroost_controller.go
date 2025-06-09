@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,8 +17,9 @@ import (
 // ManagedRoostReconciler reconciles a ManagedRoost object
 type ManagedRoostReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Logger logr.Logger
+	Scheme  *runtime.Scheme
+	Logger  logr.Logger
+	Metrics *telemetry.OperatorMetrics
 }
 
 //+kubebuilder:rbac:groups=roost.birb.party,resources=managedroosts,verbs=get;list;watch;create;update;patch;delete
@@ -35,37 +37,92 @@ type ManagedRoostReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *ManagedRoostReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	// Generate correlation ID for request tracking
+	ctx, correlationID := telemetry.WithCorrelationID(ctx)
+
+	// Create enhanced logger with context
 	logger := r.Logger.WithValues(
 		"managedroost", req.NamespacedName.String(),
 		"reconcile_id", generateReconcileID(),
+		"correlation_id", correlationID,
 	)
 
 	// Add logger to context for tracing
 	ctx = telemetry.ToContext(ctx, logger)
 
-	// Start trace for reconciliation
-	tracer := telemetry.Tracer()
-	ctx, span := tracer.Start(ctx, "ManagedRoost.Reconcile")
-	defer span.End()
+	// Wrap the entire reconciliation with observability middleware
+	wrappedReconcile := telemetry.ControllerMiddleware(
+		func(ctx context.Context) error {
+			return r.doReconcile(ctx, req)
+		},
+		"reconcile",
+		r.Metrics,
+		req.Name,
+		req.Namespace,
+	)
 
-	logger.Info("Starting reconciliation")
-
-	// Fetch the ManagedRoost instance
-	var managedRoost roostv1alpha1.ManagedRoost
-	if err := r.Get(ctx, req.NamespacedName, &managedRoost); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			logger.Info("ManagedRoost resource not found, likely deleted")
-			return ctrl.Result{}, nil
-		}
-		logger.Error(err, "Failed to get ManagedRoost")
+	err := wrappedReconcile(ctx)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully fetched ManagedRoost",
+	return ctrl.Result{RequeueAfter: time.Minute * 1}, nil
+}
+
+// doReconcile performs the actual reconciliation logic
+func (r *ManagedRoostReconciler) doReconcile(ctx context.Context, req ctrl.Request) error {
+	// Start specific span for reconcile logic
+	ctx, span := telemetry.StartControllerSpan(ctx, "reconcile.logic", req.Name, req.Namespace)
+	defer span.End()
+
+	// Log reconciliation start with enhanced context
+	telemetry.LogInfo(ctx, "Starting reconciliation",
+		"managedroost", req.NamespacedName.String(),
+	)
+
+	// Fetch the ManagedRoost instance with API call tracking
+	var managedRoost roostv1alpha1.ManagedRoost
+	err := telemetry.KubernetesAPIMiddleware(
+		func(ctx context.Context) error {
+			return r.Get(ctx, req.NamespacedName, &managedRoost)
+		},
+		"GET",
+		"ManagedRoost",
+		req.Namespace,
+		r.Metrics,
+	)(ctx)
+
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			telemetry.LogInfo(ctx, "ManagedRoost resource not found, likely deleted")
+			return nil
+		}
+		telemetry.RecordSpanError(ctx, err)
+		return err
+	}
+
+	// Add resource details to span
+	telemetry.WithSpanAttributes(ctx,
+		attribute.Int64("roost.generation", int64(managedRoost.Generation)),
+		attribute.String("roost.phase", string(managedRoost.Status.Phase)),
+		attribute.Int64("roost.observed_generation", int64(managedRoost.Status.ObservedGeneration)),
+	)
+
+	telemetry.LogInfo(ctx, "Successfully fetched ManagedRoost",
 		"phase", string(managedRoost.Status.Phase),
 		"generation", managedRoost.Generation,
 		"observed_generation", managedRoost.Status.ObservedGeneration,
 	)
+
+	// Update metrics for roost tracking
+	if r.Metrics != nil {
+		// Calculate generation lag
+		generationLag := managedRoost.Generation - managedRoost.Status.ObservedGeneration
+		r.Metrics.UpdateGenerationLag(ctx, generationLag, req.Name, req.Namespace)
+
+		// Update roost phase metrics
+		r.Metrics.UpdateRoostMetrics(ctx, 1, 0, string(managedRoost.Status.Phase), 1)
+	}
 
 	// TODO: Implement reconciliation logic
 	// This will be expanded in subsequent tasks:
@@ -73,17 +130,38 @@ func (r *ManagedRoostReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// 2. Health check implementation
 	// 3. Teardown policy enforcement
 
-	// Update observed generation
+	// Update observed generation with API call tracking
 	if managedRoost.Status.ObservedGeneration != managedRoost.Generation {
+		telemetry.WithSpanEvent(ctx, "updating_observed_generation",
+			attribute.Int64("from_generation", int64(managedRoost.Status.ObservedGeneration)),
+			attribute.Int64("to_generation", int64(managedRoost.Generation)),
+		)
+
 		managedRoost.Status.ObservedGeneration = managedRoost.Generation
-		if err := r.Status().Update(ctx, &managedRoost); err != nil {
-			logger.Error(err, "Failed to update observed generation")
-			return ctrl.Result{}, err
+
+		err := telemetry.KubernetesAPIMiddleware(
+			func(ctx context.Context) error {
+				return r.Status().Update(ctx, &managedRoost)
+			},
+			"UPDATE",
+			"ManagedRoost/status",
+			req.Namespace,
+			r.Metrics,
+		)(ctx)
+
+		if err != nil {
+			telemetry.RecordSpanError(ctx, err)
+			return err
 		}
+
+		telemetry.LogInfo(ctx, "Updated observed generation",
+			"generation", managedRoost.Generation,
+		)
 	}
 
-	logger.Info("Reconciliation completed successfully")
-	return ctrl.Result{RequeueAfter: time.Minute * 1}, nil
+	telemetry.RecordSpanSuccess(ctx)
+	telemetry.LogInfo(ctx, "Reconciliation completed successfully")
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
