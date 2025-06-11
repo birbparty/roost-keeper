@@ -1,0 +1,142 @@
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: sample-roost-with-teardown
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+      type: "http"
+    name: "nginx"
+    version: "15.4.4"
+    values:
+      inline: |
+        replicaCount: 2
+        service:
+          type: LoadBalancer
+        
+  # Health checks to monitor the roost
+  healthChecks:
+    - name: "nginx-http-check"
+      type: "http"
+      http:
+        url: "http://nginx-service/health"
+        expectedCodes: [200]
+      interval: "30s"
+      timeout: "10s"
+      failureThreshold: 3
+      weight: 10
+
+    - name: "nginx-pods-check"
+      type: "kubernetes"
+      kubernetes:
+        checkPods: true
+        checkDeployments: true
+        checkServices: true
+        requiredReadyRatio: 1.0
+      interval: "15s"
+      timeout: "5s"
+      failureThreshold: 2
+      weight: 8
+
+  # Advanced teardown policies
+  teardownPolicy:
+    # Multiple triggers can be configured
+    triggers:
+      # Time-based teardown after 2 hours
+      - type: "timeout"
+        timeout: "2h"
+      
+      # Teardown if health checks fail more than 10 times
+      - type: "failure_count"
+        failureCount: 10
+      
+      # Resource threshold teardown (placeholder for future implementation)
+      - type: "resource_threshold"
+        resourceThreshold:
+          memory: "80%"
+          cpu: "75%"
+      
+      # Scheduled teardown every day at 2 AM (placeholder for cron implementation)
+      - type: "schedule"
+        schedule: "0 2 * * *"
+
+    # Require manual approval for teardown
+    requireManualApproval: false
+
+    # Data preservation settings
+    dataPreservation:
+      enabled: true
+      backupPolicy:
+        schedule: "0 1 * * *"  # Daily at 1 AM
+        retention: "7d"
+        storage:
+          type: "s3"
+          config:
+            bucket: "roost-backups"
+            region: "us-west-2"
+      preserveResources:
+        - "PersistentVolumeClaim"
+        - "Secret"
+
+    # Cleanup configuration
+    cleanup:
+      gracePeriod: "30s"
+      force: true
+      order:
+        - "Deployment"
+        - "Service"
+        - "ConfigMap"
+
+  # Tenancy configuration
+  tenancy:
+    tenantId: "team-alpha"
+    namespaceIsolation:
+      enabled: true
+      prefix: "team-alpha"
+    resourceQuota:
+      enabled: true
+      hard:
+        requests.cpu: "4"
+        requests.memory: "8Gi"
+        persistentvolumeclaims: "4"
+
+  # Observability configuration
+  observability:
+    metrics:
+      enabled: true
+      interval: "15s"
+    logging:
+      level: "info"
+      structured: true
+    tracing:
+      enabled: false
+      samplingRate: "0.1"
+
+status:
+  phase: "Ready"
+  health: "healthy"
+  teardown:
+    triggered: false
+  healthChecks:
+    - name: "nginx-http-check"
+      status: "healthy"
+      lastCheck: "2024-01-15T10:30:00Z"
+      failureCount: 0
+      message: "HTTP check passed"
+    - name: "nginx-pods-check"
+      status: "healthy"
+      lastCheck: "2024-01-15T10:30:15Z"
+      failureCount: 0
+      message: "All pods are ready"
+  helmRelease:
+    name: "sample-roost-with-teardown"
+    revision: 1
+    status: "deployed"
+    lastDeployed: "2024-01-15T08:30:00Z"
+  observability:
+    metrics:
+      enabled: true
+      lastCollection: "2024-01-15T10:30:00Z"
+  lastReconcileTime: "2024-01-15T10:30:00Z"
