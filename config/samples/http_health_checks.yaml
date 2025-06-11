@@ -1,0 +1,388 @@
+# Advanced HTTP Health Check Examples for Roost-Keeper
+# This file demonstrates various HTTP health check configurations
+
+---
+# Basic HTTP Health Check
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: simple-web-app
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: https://charts.bitnami.com/bitnami
+    name: nginx
+    version: "15.4.4"
+  healthChecks:
+    - name: basic-health
+      type: http
+      http:
+        url: "http://{{.ServiceName}}.{{.Namespace}}.svc.cluster.local:80/health"
+        method: GET
+        expectedCodes: [200]
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 3
+      weight: 100
+
+---
+# Advanced HTTP Health Check with Authentication
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: secure-api-service
+  namespace: production
+spec:
+  chart:
+    repository:
+      url: https://charts.example.com
+    name: api-service
+    version: "2.1.0"
+  healthChecks:
+    - name: authenticated-api-check
+      type: http
+      http:
+        url: "https://{{.ServiceName}}-api.{{.Namespace}}.svc.cluster.local:8443/api/v1/health"
+        method: GET
+        expectedCodes: [200, 202]
+        expectedBody: '{"status":"healthy","database":"connected"}'
+        headers:
+          Authorization: "Bearer {{.Secret.api-auth-token.token}}"
+          X-API-Version: "v1"
+          Accept: "application/json"
+        tls:
+          insecureSkipVerify: false
+      interval: 15s
+      timeout: 5s
+      failureThreshold: 2
+      weight: 80
+
+    - name: metrics-endpoint
+      type: http
+      http:
+        url: "http://{{.ServiceName}}-metrics.{{.Namespace}}.svc.cluster.local:9090/metrics"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: "prometheus_build_info"
+      interval: 60s
+      timeout: 10s
+      failureThreshold: 5
+      weight: 20
+
+---
+# Complex Multi-Service Health Check
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: microservices-stack
+  namespace: staging
+spec:
+  chart:
+    repository:
+      url: https://helm.example.com/charts
+    name: microservices
+    version: "3.0.0"
+  healthChecks:
+    # Frontend service health check
+    - name: frontend-health
+      type: http
+      http:
+        url: "https://{{.ServiceName}}-frontend.{{.Namespace}}.svc.cluster.local:443/health"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: '"status"\s*:\s*"ok"'
+        headers:
+          User-Agent: "roost-keeper-health-check/1.0"
+        tls:
+          insecureSkipVerify: true
+      interval: 30s
+      timeout: 15s
+      failureThreshold: 3
+      weight: 40
+
+    # Backend API health check with custom authentication
+    - name: backend-api-health
+      type: http
+      http:
+        url: "http://{{.ServiceName}}-api.{{.Namespace}}.svc.cluster.local:8080/api/health"
+        method: POST
+        expectedCodes: [200, 201]
+        expectedBody: '{"healthy":true}'
+        headers:
+          Content-Type: "application/json"
+          X-Health-Check: "true"
+          Authorization: "Basic {{.Secret.backend-credentials.auth}}"
+      interval: 20s
+      timeout: 8s
+      failureThreshold: 2
+      weight: 50
+
+    # Database proxy health check
+    - name: database-proxy-health
+      type: http
+      http:
+        url: "http://{{.ServiceName}}-db-proxy.{{.Namespace}}.svc.cluster.local:5432/health"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: "database_connections_active"
+      interval: 45s
+      timeout: 20s
+      failureThreshold: 4
+      weight: 30
+
+---
+# External Service Health Check
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: external-integration
+  namespace: integrations
+spec:
+  chart:
+    repository:
+      url: oci://registry.example.com/charts
+      type: oci
+    name: integration-service
+    version: "1.5.2"
+  healthChecks:
+    # Check external API dependency
+    - name: external-api-dependency
+      type: http
+      http:
+        url: "https://api.external-service.com/v2/status"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: '"operational":\s*true'
+        headers:
+          Authorization: "Bearer {{.Secret.external-api-key.token}}"
+          X-Client-ID: "roost-keeper-{{.RoostName}}"
+      interval: 120s
+      timeout: 30s
+      failureThreshold: 3
+      weight: 60
+
+    # Internal service readiness
+    - name: service-readiness
+      type: http
+      http:
+        url: "http://{{.ServiceName}}.{{.Namespace}}.svc.cluster.local:8080/ready"
+        method: HEAD
+        expectedCodes: [200, 204]
+      interval: 10s
+      timeout: 5s
+      failureThreshold: 2
+      weight: 40
+
+---
+# Development Environment with Relaxed Checks
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: dev-application
+  namespace: development
+spec:
+  chart:
+    repository:
+      url: https://charts.local.dev
+    name: dev-app
+    version: "0.1.0-SNAPSHOT"
+  healthChecks:
+    - name: dev-health-relaxed
+      type: http
+      http:
+        url: "http://{{.ServiceName}}.{{.Namespace}}.svc.cluster.local:3000/health"
+        method: GET
+        expectedCodes: [200, 202, 204]
+        headers:
+          X-Environment: "development"
+      interval: 60s
+      timeout: 30s
+      failureThreshold: 10  # More tolerant in dev
+      weight: 100
+
+---
+# High-Frequency Monitoring for Critical Service
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: critical-payment-service
+  namespace: production
+spec:
+  chart:
+    repository:
+      url: https://secure-charts.company.com
+      auth:
+        secretRef:
+          name: chart-registry-auth
+          namespace: production
+    name: payment-processor
+    version: "4.2.1"
+  healthChecks:
+    # Critical endpoint - high frequency
+    - name: payment-processing-health
+      type: http
+      http:
+        url: "https://{{.ServiceName}}.{{.Namespace}}.svc.cluster.local:8443/api/v1/health/critical"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: '"payment_processor":\s*"operational"'
+        headers:
+          Authorization: "Bearer {{.Secret.payment-service-token.access_token}}"
+          X-Service-Check: "critical"
+        tls:
+          insecureSkipVerify: false
+      interval: 5s  # Very frequent for critical service
+      timeout: 3s
+      failureThreshold: 1  # Fail fast
+      weight: 90
+
+    # Database connectivity check
+    - name: database-connectivity
+      type: http
+      http:
+        url: "http://{{.ServiceName}}-db-check.{{.Namespace}}.svc.cluster.local:8080/db/ping"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: "database_ping_success"
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 2
+      weight: 80
+
+    # External payment gateway check
+    - name: payment-gateway-connectivity
+      type: http
+      http:
+        url: "https://api.paymentgateway.com/v1/ping"
+        method: GET
+        expectedCodes: [200]
+        headers:
+          Authorization: "Bearer {{.Secret.gateway-credentials.api_key}}"
+          X-Merchant-ID: "{{.Secret.gateway-credentials.merchant_id}}"
+      interval: 60s
+      timeout: 15s
+      failureThreshold: 3
+      weight: 70
+
+---
+# Multi-Region Load Balancer Health Check
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: global-load-balancer
+  namespace: infrastructure
+spec:
+  chart:
+    repository:
+      url: https://charts.infrastructure.com
+    name: global-lb
+    version: "2.0.0"
+  healthChecks:
+    # US East region
+    - name: us-east-health
+      type: http
+      http:
+        url: "https://us-east.{{.ServiceName}}.company.com/health"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: '"region":\s*"us-east-1"'
+        headers:
+          X-Health-Check-Region: "us-east"
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 2
+      weight: 33
+
+    # EU West region
+    - name: eu-west-health
+      type: http
+      http:
+        url: "https://eu-west.{{.ServiceName}}.company.com/health"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: '"region":\s*"eu-west-1"'
+        headers:
+          X-Health-Check-Region: "eu-west"
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 2
+      weight: 33
+
+    # Asia Pacific region
+    - name: ap-south-health
+      type: http
+      http:
+        url: "https://ap-south.{{.ServiceName}}.company.com/health"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: '"region":\s*"ap-south-1"'
+        headers:
+          X-Health-Check-Region: "ap-south"
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 2
+      weight: 34
+
+---
+# gRPC Gateway Health Check (via HTTP)
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: grpc-gateway-service
+  namespace: grpc-services
+spec:
+  chart:
+    repository:
+      url: https://charts.grpc.io
+    name: grpc-gateway
+    version: "1.16.0"
+  healthChecks:
+    # gRPC-Web health endpoint
+    - name: grpc-web-health
+      type: http
+      http:
+        url: "http://{{.ServiceName}}.{{.Namespace}}.svc.cluster.local:8080/grpc.health.v1.Health/Check"
+        method: POST
+        expectedCodes: [200]
+        expectedBody: '"status":\s*"SERVING"'
+        headers:
+          Content-Type: "application/grpc-web+json"
+          Accept: "application/json"
+      interval: 20s
+      timeout: 5s
+      failureThreshold: 3
+      weight: 100
+
+---
+# Webhook Integration Health Check
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: webhook-processor
+  namespace: webhooks
+spec:
+  chart:
+    repository:
+      url: https://charts.webhook.com
+    name: webhook-processor
+    version: "3.1.0"
+  healthChecks:
+    # Webhook endpoint validation
+    - name: webhook-endpoint-health
+      type: http
+      http:
+        url: "https://{{.ServiceName}}.{{.Namespace}}.svc.cluster.local:8443/webhooks/health"
+        method: POST
+        expectedCodes: [200, 202]
+        expectedBody: '"webhook_processor":\s*"ready"'
+        headers:
+          Content-Type: "application/json"
+          X-Webhook-Source: "health-check"
+          Authorization: "Bearer {{.Secret.webhook-auth.token}}"
+        tls:
+          insecureSkipVerify: false
+      interval: 45s
+      timeout: 20s
+      failureThreshold: 2
+      weight: 100

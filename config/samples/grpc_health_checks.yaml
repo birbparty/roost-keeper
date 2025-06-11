@@ -1,0 +1,289 @@
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: grpc-health-example
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "oci://10.0.0.106:30001/charts"
+      type: "oci"
+    name: "grpc-service"
+    version: "1.0.0"
+  
+  healthChecks:
+    # Basic gRPC health check
+    - name: "grpc-basic"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-grpc-health-example"
+        port: 50051
+        service: ""  # Empty for overall server health
+      interval: "30s"
+      timeout: "10s"
+      failureThreshold: 3
+
+    # gRPC health check with specific service
+    - name: "grpc-user-service"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-grpc-health-example"
+        port: 50051
+        service: "user.UserService"
+      interval: "15s"
+      timeout: "5s"
+      failureThreshold: 2
+
+    # gRPC health check with TLS and authentication
+    - name: "grpc-secure"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-grpc-health-example"
+        port: 50052
+        service: "secure.SecureService"
+        tls:
+          enabled: true
+          serverName: "grpc-service.default.svc.cluster.local"
+          insecureSkipVerify: false
+        auth:
+          jwt: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        metadata:
+          "x-request-id": "health-check-123"
+          "x-client-name": "roost-keeper"
+      interval: "60s"
+      timeout: "15s"
+      failureThreshold: 2
+
+    # gRPC health check with connection pooling
+    - name: "grpc-pooled"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-grpc-health-example"
+        port: 50051
+        service: "api.ApiService"
+        connectionPool:
+          enabled: true
+          maxConnections: 5
+          maxIdleTime: "120s"
+          keepAliveTime: "60s"
+          keepAliveTimeout: "10s"
+          healthCheckInterval: "30s"
+      interval: "20s"
+      timeout: "8s"
+      failureThreshold: 3
+
+    # gRPC health check with retry policy
+    - name: "grpc-retry"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-grpc-health-example"
+        port: 50051
+        service: "data.DataService"
+        retryPolicy:
+          enabled: true
+          maxAttempts: 3
+          initialDelay: "1s"
+          maxDelay: "10s"
+          multiplier: "2.0"
+          retryableStatusCodes:
+            - "UNAVAILABLE"
+            - "DEADLINE_EXCEEDED"
+            - "RESOURCE_EXHAUSTED"
+      interval: "45s"
+      timeout: "12s"
+      failureThreshold: 2
+
+    # gRPC health check with circuit breaker
+    - name: "grpc-circuit-breaker"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-grpc-health-example"
+        port: 50051
+        service: "critical.CriticalService"
+        circuitBreaker:
+          enabled: true
+          failureThreshold: 5
+          successThreshold: 3
+          halfOpenTimeout: "60s"
+          recoveryTimeout: "30s"
+      interval: "30s"
+      timeout: "10s"
+      failureThreshold: 1
+
+    # gRPC streaming health check
+    - name: "grpc-streaming"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-grpc-health-example"
+        port: 50051
+        service: "stream.StreamService"
+        enableStreaming: true
+      interval: "10s"  # Not used for streaming but required for CRD
+      timeout: "5s"
+      failureThreshold: 2
+
+    # External gRPC service check (infra-control node)
+    - name: "external-grpc-service"
+      type: "grpc"
+      grpc:
+        host: "10.0.0.106"
+        port: 50051
+        service: "example.ExampleService"
+        tls:
+          enabled: false
+        connectionPool:
+          enabled: true
+          maxConnections: 3
+        retryPolicy:
+          enabled: true
+          maxAttempts: 2
+      interval: "90s"
+      timeout: "20s"
+      failureThreshold: 3
+
+  observability:
+    metrics:
+      enabled: true
+      interval: "30s"
+    tracing:
+      enabled: true
+      samplingRate: "0.3"
+    logging:
+      level: "info"
+      structured: true
+
+---
+# Advanced gRPC health check configuration with load balancing
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: grpc-load-balanced
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "oci://10.0.0.106:30001/charts"
+      type: "oci"
+    name: "distributed-grpc-service"
+    version: "1.0.0"
+  
+  healthChecks:
+    # gRPC health check with load balancing
+    - name: "grpc-load-balanced"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-primary"
+        port: 50051
+        service: "distributed.DistributedService"
+        loadBalancing:
+          enabled: true
+          policy: "round_robin"
+          endpoints:
+            - host: "grpc-service-replica-1"
+              port: 50051
+              weight: 1
+            - host: "grpc-service-replica-2"  
+              port: 50051
+              weight: 2
+            - host: "10.0.0.106"
+              port: 50051
+              weight: 1
+        connectionPool:
+          enabled: true
+          maxConnections: 10
+        retryPolicy:
+          enabled: true
+          maxAttempts: 2
+        circuitBreaker:
+          enabled: true
+          failureThreshold: 3
+          successThreshold: 2
+      interval: "30s"
+      timeout: "15s"
+      failureThreshold: 2
+
+    # gRPC health check with OAuth2 authentication
+    - name: "grpc-oauth2"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-oauth"
+        port: 50051
+        service: "auth.AuthService"
+        tls:
+          enabled: true
+          serverName: "grpc-service-oauth.default.svc.cluster.local"
+        auth:
+          oauth2:
+            tokenURL: "https://auth.example.com/oauth/token"
+            clientID: "grpc-health-checker"
+            clientSecret: "super-secret-key"
+            scopes:
+              - "health:read"
+              - "service:check"
+      interval: "60s"
+      timeout: "20s"
+      failureThreshold: 2
+
+    # gRPC health check with custom headers
+    - name: "grpc-custom-headers"
+      type: "grpc"
+      grpc:
+        host: "grpc-service-custom"
+        port: 50051
+        service: "custom.CustomService"
+        auth:
+          headers:
+            "x-api-key": "custom-api-key-12345"
+            "x-tenant-id": "tenant-xyz"
+            "user-agent": "roost-keeper-health-checker/1.0"
+        metadata:
+          "x-health-check": "true"
+          "x-version": "v1"
+      interval: "45s"
+      timeout: "12s"
+      failureThreshold: 3
+
+  observability:
+    metrics:
+      enabled: true
+      interval: "15s"
+    tracing:
+      enabled: true
+      samplingRate: "0.5"
+    logging:
+      level: "debug"
+      structured: true
+
+---
+# Minimal gRPC health check for quick testing
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: grpc-minimal
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+      type: "http"
+    name: "nginx"
+    version: "18.1.6"
+  
+  healthChecks:
+    # Simple gRPC health check for testing
+    - name: "grpc-test"
+      type: "grpc"
+      grpc:
+        host: "localhost"
+        port: 50051
+      interval: "30s"
+      timeout: "10s"
+      failureThreshold: 3
+
+  observability:
+    metrics:
+      enabled: true
+    tracing:
+      enabled: false
+    logging:
+      level: "info"

@@ -1,0 +1,235 @@
+# Basic Kubernetes health check sample
+apiVersion: roost.birbparty.dev/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: webapp-with-k8s-health
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+    name: "nginx"
+    version: "15.1.0"
+  healthChecks:
+  - name: "kubernetes-health"
+    type: "kubernetes"
+    interval: "30s"
+    timeout: "10s"
+    kubernetes:
+      checkPods: true
+      checkDeployments: true
+      checkServices: true
+      requiredReadyRatio: 1.0  # All pods must be ready
+      apiTimeout: "5s"
+      enableCaching: true
+      cacheTTL: "30s"
+
+---
+# Advanced Kubernetes health check with dependencies and custom resources
+apiVersion: roost.birbparty.dev/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: complex-app-with-dependencies
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.example.com"
+    name: "complex-app"
+    version: "2.1.0"
+  healthChecks:
+  - name: "comprehensive-k8s-health"
+    type: "kubernetes"
+    interval: "45s"
+    timeout: "15s"
+    kubernetes:
+      # Core resource checks
+      checkPods: true
+      checkDeployments: true
+      checkServices: true
+      checkStatefulSets: true
+      checkDaemonSets: false
+      
+      # Dependency checks
+      checkDependencies: true
+      
+      # Node health (optional)
+      checkNodeHealth: true
+      
+      # Custom label selector (in addition to Helm labels)
+      labelSelector:
+        matchLabels:
+          environment: "production"
+          tier: "backend"
+        matchExpressions:
+        - key: "version"
+          operator: "In"
+          values: ["v2.1", "v2.1.1"]
+      
+      # Pod health configuration
+      requiredReadyRatio: 0.8  # 80% of pods must be ready
+      checkPodRestarts: true
+      maxPodRestarts: 10
+      
+      # Resource limits validation
+      checkResourceLimits: false
+      
+      # Performance tuning
+      apiTimeout: "10s"
+      enableCaching: true
+      cacheTTL: "1m"
+      
+      # Custom resources monitoring
+      customResources:
+      - apiVersion: "networking.istio.io/v1beta1"
+        kind: "VirtualService"
+        healthStrategy: "exists"
+      - apiVersion: "cert-manager.io/v1"
+        kind: "Certificate"
+        healthStrategy: "conditions"
+        expectedConditions:
+        - type: "Ready"
+          status: "True"
+      - apiVersion: "postgresql.cnpg.io/v1"
+        kind: "Cluster"
+        healthStrategy: "status"
+        statusPath: "phase"
+        expectedStatus: "Cluster in healthy state"
+
+---
+# Microservices deployment with separate health checks
+apiVersion: roost.birbparty.dev/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: microservices-stack
+  namespace: microservices
+spec:
+  chart:
+    repository:
+      url: "https://charts.microservices.io"
+    name: "microservices-stack"
+    version: "1.5.0"
+  healthChecks:
+  # Kubernetes native health check
+  - name: "k8s-infrastructure"
+    type: "kubernetes"
+    interval: "30s"
+    timeout: "10s"
+    weight: 50  # High weight for infrastructure
+    kubernetes:
+      checkPods: true
+      checkDeployments: true
+      checkServices: true
+      checkStatefulSets: true
+      checkDependencies: true
+      requiredReadyRatio: 1.0
+      checkPodRestarts: true
+      maxPodRestarts: 5
+      apiTimeout: "8s"
+      
+  # HTTP health check for application endpoints
+  - name: "application-endpoints"
+    type: "http"
+    interval: "15s"
+    timeout: "5s"
+    weight: 30
+    http:
+      url: "http://microservices-stack-gateway.microservices.svc.cluster.local:8080/health"
+      method: "GET"
+      expectedCodes: [200]
+      expectedBody: "OK"
+      
+  # Prometheus metrics health check
+  - name: "metrics-health"
+    type: "prometheus"
+    interval: "60s"
+    timeout: "10s"
+    weight: 20
+    prometheus:
+      serviceDiscovery:
+        serviceName: "prometheus"
+        serviceNamespace: "monitoring"
+        servicePort: "9090"
+        enableFallback: true
+      query: 'up{job="microservices-stack"}'
+      threshold: "1"
+      operator: "gte"
+
+---
+# Database with persistent storage health check
+apiVersion: roost.birbparty.dev/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: postgresql-database
+  namespace: databases
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+    name: "postgresql"
+    version: "12.1.9"
+  healthChecks:
+  - name: "database-k8s-health"
+    type: "kubernetes"
+    interval: "45s"
+    timeout: "20s"
+    kubernetes:
+      # Focus on StatefulSets for database
+      checkPods: true
+      checkDeployments: false
+      checkStatefulSets: true
+      checkServices: true
+      checkDependencies: true  # Check PVCs are bound
+      
+      # Database pods take longer to start
+      requiredReadyRatio: 1.0
+      checkPodRestarts: true
+      maxPodRestarts: 3  # Databases should be stable
+      
+      # Check node health to ensure storage is available
+      checkNodeHealth: true
+      
+      apiTimeout: "15s"
+      enableCaching: true
+      cacheTTL: "2m"  # Longer cache for stable database
+
+---
+# Development environment with relaxed health checks
+apiVersion: roost.birbparty.dev/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: dev-application
+  namespace: development
+spec:
+  chart:
+    repository:
+      url: "https://charts.dev.example.com"
+    name: "dev-app"
+    version: "0.1.0-dev"
+  healthChecks:
+  - name: "dev-k8s-health"
+    type: "kubernetes"
+    interval: "60s"  # Less frequent checks in dev
+    timeout: "30s"   # More generous timeout
+    failureThreshold: 5  # Allow more failures in dev
+    kubernetes:
+      checkPods: true
+      checkDeployments: true
+      checkServices: true
+      
+      # Relaxed requirements for development
+      requiredReadyRatio: 0.5  # Only 50% of pods need to be ready
+      checkPodRestarts: true
+      maxPodRestarts: 20  # Allow many restarts in dev
+      
+      # Skip dependency and node checks in dev
+      checkDependencies: false
+      checkNodeHealth: false
+      
+      # Custom labels for dev environment
+      labelSelector:
+        matchLabels:
+          environment: "development"
+          
+      apiTimeout: "10s"
+      enableCaching: false  # Disable caching for faster dev feedback

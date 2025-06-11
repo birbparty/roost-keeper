@@ -1,0 +1,282 @@
+# Prometheus Health Checks Sample Configurations
+# These examples demonstrate the various capabilities of Prometheus-based health monitoring
+
+---
+# Basic Prometheus health check with explicit endpoint
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: basic-prometheus-roost
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.example.com"
+    name: "my-app"
+    version: "1.0.0"
+  healthChecks:
+  - name: "memory-usage-check"
+    type: "prometheus"
+    interval: "30s"
+    timeout: "10s"
+    prometheus:
+      endpoint: "http://prometheus.monitoring:9090"
+      query: 'avg(container_memory_usage_bytes{pod=~"{{.ServiceName}}-.*"}) / 1024 / 1024'
+      threshold: "512"  # 512 MB
+      operator: "lt"    # Less than threshold means healthy
+      labels:
+        team: "platform"
+        severity: "warning"
+
+---
+# Prometheus health check with service discovery and bearer token auth
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: service-discovery-roost
+  namespace: apps
+spec:
+  chart:
+    repository:
+      url: "https://charts.example.com"
+    name: "web-service"
+    version: "2.1.0"
+  healthChecks:
+  - name: "response-time-check"
+    type: "prometheus"
+    interval: "60s"
+    timeout: "15s"
+    prometheus:
+      serviceDiscovery:
+        serviceName: "prometheus-server"
+        serviceNamespace: "monitoring"
+        servicePort: "9090"
+        pathPrefix: "/prometheus"
+        enableFallback: true
+      endpoint: "http://prometheus.monitoring:9090"  # Fallback endpoint
+      query: 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service="{{.ServiceName}}"}[5m]))'
+      threshold: "0.5"  # 500ms
+      operator: "lt"
+      auth:
+        bearerToken: "{{.Secret.prometheus-token.token}}"
+      cacheTTL: "2m"
+
+---
+# Advanced Prometheus health check with trend analysis
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: trend-analysis-roost
+  namespace: production
+spec:
+  chart:
+    repository:
+      url: "oci://registry.example.com/charts"
+    name: "api-service"
+    version: "3.0.0"
+  healthChecks:
+  - name: "error-rate-trend-check"
+    type: "prometheus"
+    interval: "45s"
+    timeout: "20s"
+    prometheus:
+      serviceDiscovery:
+        labelSelector:
+          app: "prometheus"
+          component: "server"
+        servicePort: "web"
+        tls: false
+      query: 'rate(http_requests_total{service="{{.ServiceName}}", status=~"5.."}[5m]) / rate(http_requests_total{service="{{.ServiceName}}"}[5m])'
+      threshold: "0.01"  # 1% error rate
+      operator: "lt"
+      auth:
+        secretRef:
+          name: "prometheus-credentials"
+          key: "token"
+      trendAnalysis:
+        enabled: true
+        timeWindow: "15m"
+        improvementThreshold: 20  # 20% improvement needed
+        degradationThreshold: 30  # 30% degradation triggers concern
+        allowImprovingUnhealthy: true  # Consider healthy if improving despite threshold
+      queryTimeout: "30s"
+      cacheTTL: "3m"
+
+---
+# Prometheus health check with basic authentication
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: basic-auth-roost
+  namespace: staging
+spec:
+  chart:
+    repository:
+      url: "https://charts.internal.com"
+    name: "worker-service"
+    version: "1.5.2"
+  healthChecks:
+  - name: "queue-depth-check"
+    type: "prometheus"
+    interval: "30s"
+    prometheus:
+      endpoint: "https://prometheus.internal.com:9090"
+      query: 'sum(rabbitmq_queue_messages{queue=~"{{.ServiceName}}-.*"})'
+      threshold: "1000"
+      operator: "lt"
+      auth:
+        basicAuth:
+          username: "monitoring"
+          password: "{{.Secret.prometheus-basic-auth.password}}"
+      labels:
+        environment: "staging"
+        component: "messaging"
+
+---
+# Multiple Prometheus health checks with different priorities
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: multi-check-roost
+  namespace: critical
+spec:
+  chart:
+    repository:
+      url: "oci://harbor.company.com/charts"
+    name: "payment-service"
+    version: "4.2.1"
+  healthChecks:
+  # Critical CPU usage check
+  - name: "cpu-usage-critical"
+    type: "prometheus"
+    interval: "15s"
+    timeout: "5s"
+    weight: 10  # High priority
+    prometheus:
+      serviceDiscovery:
+        serviceName: "prometheus"
+        serviceNamespace: "monitoring"
+      query: 'avg(rate(container_cpu_usage_seconds_total{pod=~"{{.ServiceName}}-.*"}[5m])) * 100'
+      threshold: "80"  # 80% CPU
+      operator: "lt"
+      auth:
+        headers:
+          "X-API-Key": "{{.Secret.prometheus-api.key}}"
+      
+  # Memory pressure warning
+  - name: "memory-pressure-warning"
+    type: "prometheus"
+    interval: "30s"
+    weight: 5  # Medium priority
+    prometheus:
+      serviceDiscovery:
+        serviceName: "prometheus"
+        serviceNamespace: "monitoring"
+      query: 'avg(container_memory_working_set_bytes{pod=~"{{.ServiceName}}-.*"}) / avg(container_spec_memory_limit_bytes{pod=~"{{.ServiceName}}-.*"}) * 100'
+      threshold: "90"  # 90% of memory limit
+      operator: "lt"
+      trendAnalysis:
+        enabled: true
+        timeWindow: "10m"
+        degradationThreshold: 15
+      
+  # Disk I/O monitoring
+  - name: "disk-io-monitoring"
+    type: "prometheus"
+    interval: "60s"
+    weight: 3  # Lower priority
+    prometheus:
+      serviceDiscovery:
+        serviceName: "prometheus"
+        serviceNamespace: "monitoring"
+      query: 'rate(container_fs_reads_bytes_total{pod=~"{{.ServiceName}}-.*"}[5m]) + rate(container_fs_writes_bytes_total{pod=~"{{.ServiceName}}-.*"}[5m])'
+      threshold: "104857600"  # 100MB/s
+      operator: "lt"
+      cacheTTL: "5m"
+
+---
+# Prometheus health check with custom headers and client certificates
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: mtls-roost
+  namespace: secure
+spec:
+  chart:
+    repository:
+      url: "https://secure-charts.company.com"
+      auth:
+        type: "token"
+        token: "{{.Secret.chart-registry.token}}"
+    name: "secure-service"
+    version: "2.0.0"
+  healthChecks:
+  - name: "secure-metrics-check"
+    type: "prometheus"
+    interval: "45s"
+    prometheus:
+      endpoint: "https://prometheus-secure.monitoring:9443"
+      query: 'up{job="{{.ServiceName}}"}'
+      threshold: "1"
+      operator: "eq"  # Exactly 1 means service is up
+      auth:
+        headers:
+          "X-Tenant-ID": "{{.RoostNamespace}}"
+          "X-Service-Name": "{{.ServiceName}}"
+        clientCertificateRef:
+          name: "prometheus-client-cert"
+          namespace: "monitoring"
+
+---
+# Composite health check combining Prometheus with other types
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: composite-health-roost
+  namespace: production
+spec:
+  chart:
+    repository:
+      url: "https://charts.example.com"
+    name: "full-stack-app"
+    version: "5.0.0"
+  healthChecks:
+  # HTTP health check for basic connectivity
+  - name: "http-liveness"
+    type: "http"
+    interval: "10s"
+    weight: 10
+    http:
+      url: "http://{{.ServiceName}}.{{.Namespace}}:8080/health"
+      expectedCodes: [200]
+      
+  # Prometheus metrics for performance monitoring
+  - name: "performance-metrics"
+    type: "prometheus"
+    interval: "30s"
+    weight: 8
+    prometheus:
+      serviceDiscovery:
+        serviceName: "prometheus"
+        serviceNamespace: "monitoring"
+      query: 'avg(rate(http_requests_total{service="{{.ServiceName}}"}[5m]))'
+      threshold: "100"  # 100 requests per second
+      operator: "gt"   # Greater than threshold means healthy traffic
+      trendAnalysis:
+        enabled: true
+        timeWindow: "20m"
+        
+  # Database connection health via Prometheus
+  - name: "database-connection-health"
+    type: "prometheus"
+    interval: "60s"
+    weight: 9
+    prometheus:
+      serviceDiscovery:
+        serviceName: "prometheus"
+        serviceNamespace: "monitoring"
+      query: 'sum(mysql_up{instance=~".*{{.ServiceName}}.*"})'
+      threshold: "1"
+      operator: "gte"
+      auth:
+        bearerToken: "{{.Secret.monitoring-token.value}}"

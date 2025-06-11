@@ -1,0 +1,167 @@
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: udp-health-example
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+      type: "http"
+    name: "coredns"
+    version: "1.31.0"
+  
+  healthChecks:
+    # Basic UDP connectivity check (no response expected)
+    - name: "coredns-udp-basic"
+      type: "udp"
+      udp:
+        host: "coredns-udp-health-example"
+        port: 53
+        sendData: "ping"
+        # No expectedResponse - just test if we can send data
+      interval: "15s"
+      timeout: "5s"
+      failureThreshold: 2
+
+    # DNS query over UDP with response validation
+    - name: "coredns-dns-query"
+      type: "udp"
+      udp:
+        host: "coredns-udp-health-example"
+        port: 53
+        sendData: "\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01"
+        expectedResponse: "\x12\x34"  # Should match the query ID
+        readTimeout: "3s"
+        retries: 2
+      interval: "30s"
+      timeout: "10s"
+      failureThreshold: 3
+
+    # External UDP check to test public DNS
+    - name: "external-dns-google"
+      type: "udp"
+      udp:
+        host: "8.8.8.8"
+        port: 53
+        sendData: "\xab\xcd\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06google\x03com\x00\x00\x01\x00\x01"
+        expectedResponse: "\xab\xcd"  # Should match the query ID
+        readTimeout: "2s"
+        retries: 3
+      interval: "60s"
+      timeout: "8s"
+      failureThreshold: 2
+
+  observability:
+    metrics:
+      enabled: true
+      interval: "30s"
+    tracing:
+      enabled: true
+      samplingRate: "0.15"
+    logging:
+      level: "info"
+      structured: true
+
+---
+# Example showing custom UDP protocol validation
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: udp-custom-protocol
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "oci://10.0.0.106:30001/charts"
+      type: "oci"
+    name: "memcached"
+    version: "7.4.8"
+  
+  healthChecks:
+    # Simple UDP echo test
+    - name: "udp-echo-test"
+      type: "udp"
+      udp:
+        host: "memcached-udp-custom-protocol"
+        port: 11211
+        sendData: "stats\r\n"
+        expectedResponse: "STAT"
+        readTimeout: "4s"
+        retries: 3
+      interval: "45s"
+      timeout: "12s"
+      failureThreshold: 3
+
+    # UDP health check with high retry count for unreliable networks
+    - name: "udp-resilient-check"
+      type: "udp"
+      udp:
+        host: "memcached-udp-custom-protocol"
+        port: 11211
+        sendData: "version\r\n"
+        expectedResponse: "VERSION"
+        readTimeout: "2s"
+        retries: 5
+      interval: "30s"
+      timeout: "15s"
+      failureThreshold: 4
+
+  observability:
+    metrics:
+      enabled: true
+    tracing:
+      enabled: false
+    logging:
+      level: "debug"
+
+---
+# Example for UDP-based service discovery
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: udp-service-discovery
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+      type: "http"
+    name: "consul"
+    version: "1.0.2"
+  
+  healthChecks:
+    # Consul UDP health check for service discovery
+    - name: "consul-udp-discovery"
+      type: "udp"
+      udp:
+        host: "consul-udp-service-discovery"
+        port: 8600  # Consul DNS port
+        sendData: "\x00\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06consul\x07service\x06consul\x00\x00\x01\x00\x01"
+        expectedResponse: "\x00\x01"
+        readTimeout: "3s"
+        retries: 2
+      interval: "20s"
+      timeout: "8s"
+      failureThreshold: 2
+
+    # Simple UDP ping for consul agent
+    - name: "consul-udp-ping"
+      type: "udp"
+      udp:
+        host: "consul-udp-service-discovery"
+        port: 8600
+        sendData: "ping"
+        # No response expected - just connectivity test
+        readTimeout: "1s"
+        retries: 1
+      interval: "10s"
+      timeout: "3s"
+      failureThreshold: 1
+
+  observability:
+    metrics:
+      enabled: true
+      interval: "15s"
+    logging:
+      level: "warn"

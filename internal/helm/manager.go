@@ -36,6 +36,9 @@ type Manager interface {
 
 	// GetStatus returns the current status of a Helm release
 	GetStatus(ctx context.Context, roost *roostv1alpha1.ManagedRoost) (*roostv1alpha1.HelmReleaseStatus, error)
+
+	// Rollback rolls back a Helm release to a specific revision
+	Rollback(ctx context.Context, roost *roostv1alpha1.ManagedRoost, revision int) error
 }
 
 // HelmManager implements the Manager interface
@@ -356,6 +359,56 @@ func (hm *HelmManager) GetStatus(ctx context.Context, roost *roostv1alpha1.Manag
 
 	telemetry.RecordSpanSuccess(ctx)
 	return status, nil
+}
+
+// Rollback rolls back a Helm release to a specific revision
+func (hm *HelmManager) Rollback(ctx context.Context, roost *roostv1alpha1.ManagedRoost, revision int) error {
+	ctx, span := telemetry.StartControllerSpan(ctx, "helm.rollback", roost.Name, roost.Namespace)
+	defer span.End()
+
+	log := hm.Logger.With(
+		zap.String("operation", "rollback"),
+		zap.String("roost", roost.Name),
+		zap.String("namespace", roost.Namespace),
+		zap.Int("revision", revision),
+	)
+
+	log.Info("Starting Helm rollback")
+
+	// Create action configuration
+	actionConfig, err := hm.createActionConfig(ctx, roost)
+	if err != nil {
+		telemetry.RecordSpanError(ctx, err)
+		return fmt.Errorf("failed to create action config: %w", err)
+	}
+
+	// Create rollback client
+	rollbackClient := action.NewRollback(actionConfig)
+	rollbackClient.Wait = true
+	rollbackClient.Timeout = hm.getTimeout(roost)
+	rollbackClient.CleanupOnFail = true
+	rollbackClient.Version = revision // Set the target revision
+
+	// Configure rollback policy if specified
+	if roost.Spec.Chart.UpgradePolicy != nil {
+		rollbackClient.CleanupOnFail = roost.Spec.Chart.UpgradePolicy.CleanupOnFail
+	}
+
+	// Execute rollback
+	err = rollbackClient.Run(hm.getReleaseName(roost))
+	if err != nil {
+		telemetry.RecordSpanError(ctx, err)
+		log.Error("Helm rollback failed", zap.Error(err))
+		return fmt.Errorf("helm rollback failed: %w", err)
+	}
+
+	log.Info("Helm rollback completed successfully",
+		zap.String("release_name", hm.getReleaseName(roost)),
+		zap.Int("revision", revision),
+	)
+
+	telemetry.RecordSpanSuccess(ctx)
+	return nil
 }
 
 // Helper methods

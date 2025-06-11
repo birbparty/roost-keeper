@@ -1,0 +1,132 @@
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: tcp-health-example
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+      type: "http"
+    name: "nginx"
+    version: "18.1.6"
+  
+  healthChecks:
+    # Basic TCP connectivity check
+    - name: "nginx-tcp-basic"
+      type: "tcp"
+      tcp:
+        host: "nginx-tcp-health-example"
+        port: 80
+      interval: "15s"
+      timeout: "5s"
+      failureThreshold: 2
+
+    # TCP check with protocol validation (HTTP over TCP)
+    - name: "nginx-tcp-http-protocol"
+      type: "tcp"
+      tcp:
+        host: "nginx-tcp-health-example"
+        port: 80
+        sendData: "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        expectedResponse: "HTTP/1.1 200"
+        connectionTimeout: "3s"
+      interval: "30s"
+      timeout: "10s"
+      failureThreshold: 3
+
+    # TCP check with connection pooling for performance
+    - name: "nginx-tcp-pooled"
+      type: "tcp"
+      tcp:
+        host: "nginx-tcp-health-example"
+        port: 80
+        enablePooling: true
+        connectionTimeout: "2s"
+      interval: "10s"
+      timeout: "5s"
+      failureThreshold: 1
+
+    # External TCP check to test infra-control Docker registry
+    - name: "external-docker-registry"
+      type: "tcp"
+      tcp:
+        host: "10.0.0.106"
+        port: 30000
+        sendData: "GET /v2/ HTTP/1.1\r\nHost: 10.0.0.106:30000\r\n\r\n"
+        expectedResponse: "HTTP/1.1 200"
+      interval: "60s"
+      timeout: "10s"
+      failureThreshold: 2
+
+    # External TCP check to test infra-control Zot registry  
+    - name: "external-zot-registry"
+      type: "tcp"
+      tcp:
+        host: "10.0.0.106"
+        port: 30001
+        enablePooling: true
+      interval: "45s"
+      timeout: "8s"
+      failureThreshold: 2
+
+  observability:
+    metrics:
+      enabled: true
+      interval: "30s"
+    tracing:
+      enabled: true
+      samplingRate: "0.2"
+    logging:
+      level: "info"
+      structured: true
+
+---
+# Example showing different TCP protocol validations
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: tcp-protocol-validation
+  namespace: default
+spec:
+  chart:
+    repository:
+      url: "oci://10.0.0.106:30001/charts"
+      type: "oci"
+    name: "redis"
+    version: "19.6.4"
+  
+  healthChecks:
+    # Redis PING command over TCP
+    - name: "redis-ping"
+      type: "tcp"
+      tcp:
+        host: "redis-tcp-protocol-validation"
+        port: 6379
+        sendData: "*1\r\n$4\r\nPING\r\n"
+        expectedResponse: "+PONG"
+        connectionTimeout: "2s"
+      interval: "20s"
+      timeout: "5s"
+      failureThreshold: 3
+
+    # Redis INFO command validation
+    - name: "redis-info"
+      type: "tcp"
+      tcp:
+        host: "redis-tcp-protocol-validation"
+        port: 6379
+        sendData: "*1\r\n$4\r\nINFO\r\n"
+        expectedResponse: "redis_version"
+        enablePooling: true
+      interval: "60s"
+      timeout: "10s"
+      failureThreshold: 2
+
+  observability:
+    metrics:
+      enabled: true
+    tracing:
+      enabled: false
+    logging:
+      level: "debug"

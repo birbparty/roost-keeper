@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -102,6 +103,16 @@ type RepositoryAuthSpec struct {
 	// Password for basic auth
 	// +kubebuilder:validation:Optional
 	Password string `json:"password,omitempty"`
+
+	// Token for token-based authentication (OCI registries)
+	// +kubebuilder:validation:Optional
+	Token string `json:"token,omitempty"`
+
+	// Authentication type for OCI registries
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=basic;token;docker-config
+	// +kubebuilder:default=basic
+	Type string `json:"type,omitempty"`
 }
 
 // RepositoryTLSSpec defines TLS configuration for repository access
@@ -225,7 +236,7 @@ type HealthCheckSpec struct {
 
 	// Health check type
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=http;tcp;grpc;prometheus;kubernetes
+	// +kubebuilder:validation:Enum=http;tcp;udp;grpc;prometheus;kubernetes
 	Type string `json:"type"`
 
 	// HTTP health check configuration
@@ -235,6 +246,10 @@ type HealthCheckSpec struct {
 	// TCP health check configuration
 	// +kubebuilder:validation:Optional
 	TCP *TCPHealthCheckSpec `json:"tcp,omitempty"`
+
+	// UDP health check configuration
+	// +kubebuilder:validation:Optional
+	UDP *UDPHealthCheckSpec `json:"udp,omitempty"`
 
 	// gRPC health check configuration
 	// +kubebuilder:validation:Optional
@@ -312,6 +327,57 @@ type TCPHealthCheckSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
+
+	// Optional data to send for protocol validation
+	// +kubebuilder:validation:Optional
+	SendData string `json:"sendData,omitempty"`
+
+	// Expected response for protocol validation
+	// +kubebuilder:validation:Optional
+	ExpectedResponse string `json:"expectedResponse,omitempty"`
+
+	// Connection timeout (overrides general timeout for connection phase)
+	// +kubebuilder:validation:Optional
+	ConnectionTimeout *metav1.Duration `json:"connectionTimeout,omitempty"`
+
+	// Enable connection pooling for performance
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	EnablePooling bool `json:"enablePooling,omitempty"`
+}
+
+// UDPHealthCheckSpec defines UDP-based health checks
+type UDPHealthCheckSpec struct {
+	// Target host
+	// +kubebuilder:validation:Required
+	Host string `json:"host"`
+
+	// Target port
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Data to send for UDP validation
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="ping"
+	SendData string `json:"sendData,omitempty"`
+
+	// Expected response for UDP validation
+	// +kubebuilder:validation:Optional
+	ExpectedResponse string `json:"expectedResponse,omitempty"`
+
+	// Read timeout for UDP response
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="5s"
+	ReadTimeout *metav1.Duration `json:"readTimeout,omitempty"`
+
+	// Number of retry attempts for UDP packets
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:default=3
+	Retries int32 `json:"retries,omitempty"`
 }
 
 // GRPCHealthCheckSpec defines gRPC-based health checks
@@ -326,18 +392,47 @@ type GRPCHealthCheckSpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
 
-	// Service name for health check
+	// Service name for health check (empty for overall server health)
 	// +kubebuilder:validation:Optional
 	Service string `json:"service,omitempty"`
 
 	// TLS configuration
 	// +kubebuilder:validation:Optional
 	TLS *GRPCTLSSpec `json:"tls,omitempty"`
+
+	// Authentication configuration
+	// +kubebuilder:validation:Optional
+	Auth *GRPCAuthSpec `json:"auth,omitempty"`
+
+	// Connection pool configuration
+	// +kubebuilder:validation:Optional
+	ConnectionPool *GRPCConnectionPoolSpec `json:"connectionPool,omitempty"`
+
+	// Retry policy configuration
+	// +kubebuilder:validation:Optional
+	RetryPolicy *GRPCRetryPolicySpec `json:"retryPolicy,omitempty"`
+
+	// Enable streaming health checks (Watch method)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	EnableStreaming bool `json:"enableStreaming,omitempty"`
+
+	// Load balancing configuration for multiple endpoints
+	// +kubebuilder:validation:Optional
+	LoadBalancing *GRPCLoadBalancingSpec `json:"loadBalancing,omitempty"`
+
+	// Circuit breaker configuration
+	// +kubebuilder:validation:Optional
+	CircuitBreaker *GRPCCircuitBreakerSpec `json:"circuitBreaker,omitempty"`
+
+	// Custom metadata to send with health check requests
+	// +kubebuilder:validation:Optional
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // PrometheusHealthCheckSpec defines Prometheus-based health checks
 type PrometheusHealthCheckSpec struct {
-	// Prometheus query
+	// Prometheus query (supports templating with roost variables)
 	// +kubebuilder:validation:Required
 	Query string `json:"query"`
 
@@ -347,39 +442,241 @@ type PrometheusHealthCheckSpec struct {
 
 	// Comparison operator
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Enum=gt;gte;lt;lte;eq;ne
+	// +kubebuilder:validation:Enum=gt;gte;lt;lte;eq;ne;>;>=;<;<=;==;!=
 	// +kubebuilder:default=gte
 	Operator string `json:"operator,omitempty"`
 
-	// Prometheus endpoint URL
+	// Prometheus endpoint URL (explicit configuration)
 	// +kubebuilder:validation:Optional
 	Endpoint string `json:"endpoint,omitempty"`
+
+	// Service discovery configuration for automatic Prometheus endpoint detection
+	// +kubebuilder:validation:Optional
+	ServiceDiscovery *PrometheusDiscoverySpec `json:"serviceDiscovery,omitempty"`
+
+	// Authentication configuration for Prometheus access
+	// +kubebuilder:validation:Optional
+	Auth *PrometheusAuthSpec `json:"auth,omitempty"`
+
+	// Query timeout (overrides health check timeout for query execution)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30s"
+	QueryTimeout *metav1.Duration `json:"queryTimeout,omitempty"`
+
+	// Cache TTL for query results
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="5m"
+	CacheTTL *metav1.Duration `json:"cacheTTL,omitempty"`
+
+	// Trend analysis configuration for time-series evaluation
+	// +kubebuilder:validation:Optional
+	TrendAnalysis *TrendAnalysisSpec `json:"trendAnalysis,omitempty"`
+
+	// Custom labels to add to metrics and logs
+	// +kubebuilder:validation:Optional
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
-// KubernetesHealthCheckSpec defines Kubernetes resource-based health checks
-type KubernetesHealthCheckSpec struct {
-	// Resources to check
-	// +kubebuilder:validation:Required
-	Resources []KubernetesResourceCheck `json:"resources"`
-}
+// PrometheusDiscoverySpec defines service discovery configuration for Prometheus endpoints
+type PrometheusDiscoverySpec struct {
+	// Kubernetes service name containing Prometheus
+	// +kubebuilder:validation:Optional
+	ServiceName string `json:"serviceName,omitempty"`
 
-// KubernetesResourceCheck defines a single Kubernetes resource health check
-type KubernetesResourceCheck struct {
-	// API version of the resource
-	// +kubebuilder:validation:Required
-	APIVersion string `json:"apiVersion"`
+	// Kubernetes service namespace
+	// +kubebuilder:validation:Optional
+	ServiceNamespace string `json:"serviceNamespace,omitempty"`
 
-	// Kind of the resource
-	// +kubebuilder:validation:Required
-	Kind string `json:"kind"`
+	// Service port name or number
+	// +kubebuilder:validation:Optional
+	ServicePort string `json:"servicePort,omitempty"`
 
-	// Label selector for resources
+	// Label selector for service discovery
 	// +kubebuilder:validation:Optional
 	LabelSelector map[string]string `json:"labelSelector,omitempty"`
 
-	// Expected conditions
+	// Path prefix for Prometheus API (e.g., "/prometheus")
 	// +kubebuilder:validation:Optional
-	Conditions []ExpectedCondition `json:"conditions,omitempty"`
+	// +kubebuilder:default=""
+	PathPrefix string `json:"pathPrefix,omitempty"`
+
+	// Enable TLS for discovered endpoints
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	TLS bool `json:"tls,omitempty"`
+
+	// Enable service discovery fallback to explicit endpoint
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	EnableFallback bool `json:"enableFallback,omitempty"`
+}
+
+// PrometheusAuthSpec defines authentication configuration for Prometheus access
+type PrometheusAuthSpec struct {
+	// Bearer token for authentication
+	// +kubebuilder:validation:Optional
+	BearerToken string `json:"bearerToken,omitempty"`
+
+	// Basic authentication credentials
+	// +kubebuilder:validation:Optional
+	BasicAuth *BasicAuthSpec `json:"basicAuth,omitempty"`
+
+	// Secret reference for authentication credentials
+	// +kubebuilder:validation:Optional
+	SecretRef *SecretReference `json:"secretRef,omitempty"`
+
+	// Custom headers for authentication
+	// +kubebuilder:validation:Optional
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// TLS client certificate for mutual TLS
+	// +kubebuilder:validation:Optional
+	ClientCertificateRef *SecretReference `json:"clientCertificateRef,omitempty"`
+}
+
+// TrendAnalysisSpec defines trend analysis configuration for time-series data
+type TrendAnalysisSpec struct {
+	// Enable trend analysis
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Time window for trend analysis
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="15m"
+	TimeWindow metav1.Duration `json:"timeWindow,omitempty"`
+
+	// Threshold for trend improvement detection (percentage)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=10
+	ImprovementThreshold int32 `json:"improvementThreshold,omitempty"`
+
+	// Threshold for trend degradation detection (percentage)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=20
+	DegradationThreshold int32 `json:"degradationThreshold,omitempty"`
+
+	// Consider improving trends as healthy even if threshold fails
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	AllowImprovingUnhealthy bool `json:"allowImprovingUnhealthy,omitempty"`
+}
+
+// KubernetesHealthCheckSpec defines Kubernetes native health checks for Helm-deployed resources
+type KubernetesHealthCheckSpec struct {
+	// Enable pod health checking (readiness and liveness probes)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	CheckPods bool `json:"checkPods,omitempty"`
+
+	// Enable deployment health checking (replica status and rollouts)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	CheckDeployments bool `json:"checkDeployments,omitempty"`
+
+	// Enable service endpoint checking (endpoint availability)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	CheckServices bool `json:"checkServices,omitempty"`
+
+	// Enable resource dependency checking (PVCs, ConfigMaps, Secrets)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	CheckDependencies bool `json:"checkDependencies,omitempty"`
+
+	// Enable StatefulSet health checking
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	CheckStatefulSets bool `json:"checkStatefulSets,omitempty"`
+
+	// Enable DaemonSet health checking
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	CheckDaemonSets bool `json:"checkDaemonSets,omitempty"`
+
+	// Custom label selector (combined with Helm release labels)
+	// +kubebuilder:validation:Optional
+	LabelSelector *metav1.LabelSelector `json:"labelSelector,omitempty"`
+
+	// Required ready ratio for pods (0.0-1.0, default: 1.0 = all pods must be ready)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
+	// +kubebuilder:default=1.0
+	RequiredReadyRatio *float64 `json:"requiredReadyRatio,omitempty"`
+
+	// Timeout for individual Kubernetes API calls
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="5s"
+	APITimeout *metav1.Duration `json:"apiTimeout,omitempty"`
+
+	// Enable resource caching with watch-based updates
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	EnableCaching *bool `json:"enableCaching,omitempty"`
+
+	// Cache TTL for health check results
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30s"
+	CacheTTL *metav1.Duration `json:"cacheTTL,omitempty"`
+
+	// Include pod restart count in health assessment
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	CheckPodRestarts bool `json:"checkPodRestarts,omitempty"`
+
+	// Maximum allowed pod restart count before marking unhealthy
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=5
+	MaxPodRestarts *int32 `json:"maxPodRestarts,omitempty"`
+
+	// Check resource requests and limits compliance
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	CheckResourceLimits bool `json:"checkResourceLimits,omitempty"`
+
+	// Include node health in assessment (checks if nodes are ready)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	CheckNodeHealth bool `json:"checkNodeHealth,omitempty"`
+
+	// Custom resource types to check (in addition to standard types)
+	// +kubebuilder:validation:Optional
+	CustomResources []KubernetesCustomResourceCheck `json:"customResources,omitempty"`
+}
+
+// KubernetesCustomResourceCheck defines a custom resource type to monitor
+type KubernetesCustomResourceCheck struct {
+	// API version of the custom resource
+	// +kubebuilder:validation:Required
+	APIVersion string `json:"apiVersion"`
+
+	// Kind of the custom resource
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+
+	// Health assessment strategy for this custom resource
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=exists;conditions;status
+	// +kubebuilder:default=exists
+	HealthStrategy string `json:"healthStrategy,omitempty"`
+
+	// Expected conditions for the custom resource (when using 'conditions' strategy)
+	// +kubebuilder:validation:Optional
+	ExpectedConditions []ExpectedCondition `json:"expectedConditions,omitempty"`
+
+	// JSONPath expression to extract health status (when using 'status' strategy)
+	// +kubebuilder:validation:Optional
+	StatusPath string `json:"statusPath,omitempty"`
+
+	// Expected status value (when using 'status' strategy)
+	// +kubebuilder:validation:Optional
+	ExpectedStatus string `json:"expectedStatus,omitempty"`
 }
 
 // ExpectedCondition defines an expected condition for a Kubernetes resource
@@ -392,6 +689,10 @@ type ExpectedCondition struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=True;False;Unknown
 	Status string `json:"status"`
+
+	// Optional reason for the condition
+	// +kubebuilder:validation:Optional
+	Reason string `json:"reason,omitempty"`
 }
 
 // HTTPTLSSpec defines TLS configuration for HTTP health checks
@@ -404,10 +705,212 @@ type HTTPTLSSpec struct {
 
 // GRPCTLSSpec defines TLS configuration for gRPC health checks
 type GRPCTLSSpec struct {
+	// Enable TLS
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
 	// Skip TLS verification
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default=false
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+
+	// Server name for TLS verification
+	// +kubebuilder:validation:Optional
+	ServerName string `json:"serverName,omitempty"`
+
+	// CA certificate bundle for verification
+	// +kubebuilder:validation:Optional
+	CABundle []byte `json:"caBundle,omitempty"`
+
+	// Secret reference for TLS certificates
+	// +kubebuilder:validation:Optional
+	SecretRef *SecretReference `json:"secretRef,omitempty"`
+
+	// Client certificate for mutual TLS
+	// +kubebuilder:validation:Optional
+	ClientCertificateRef *SecretReference `json:"clientCertificateRef,omitempty"`
+}
+
+// GRPCAuthSpec defines authentication configuration for gRPC health checks
+type GRPCAuthSpec struct {
+	// JWT token for authentication
+	// +kubebuilder:validation:Optional
+	JWT string `json:"jwt,omitempty"`
+
+	// Bearer token for authentication
+	// +kubebuilder:validation:Optional
+	BearerToken string `json:"bearerToken,omitempty"`
+
+	// Custom authentication headers
+	// +kubebuilder:validation:Optional
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// OAuth2 configuration
+	// +kubebuilder:validation:Optional
+	OAuth2 *GRPCOAuth2Spec `json:"oauth2,omitempty"`
+
+	// Basic authentication
+	// +kubebuilder:validation:Optional
+	BasicAuth *BasicAuthSpec `json:"basicAuth,omitempty"`
+}
+
+// GRPCOAuth2Spec defines OAuth2 authentication configuration
+type GRPCOAuth2Spec struct {
+	// OAuth2 token endpoint
+	// +kubebuilder:validation:Required
+	TokenURL string `json:"tokenURL"`
+
+	// OAuth2 client ID
+	// +kubebuilder:validation:Required
+	ClientID string `json:"clientID"`
+
+	// OAuth2 client secret
+	// +kubebuilder:validation:Required
+	ClientSecret string `json:"clientSecret"`
+
+	// OAuth2 scopes
+	// +kubebuilder:validation:Optional
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// GRPCConnectionPoolSpec defines connection pool configuration
+type GRPCConnectionPoolSpec struct {
+	// Enable connection pooling
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Maximum number of connections per target
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1000
+	// +kubebuilder:default=10
+	MaxConnections int32 `json:"maxConnections,omitempty"`
+
+	// Maximum connection idle time
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="60s"
+	MaxIdleTime metav1.Duration `json:"maxIdleTime,omitempty"`
+
+	// Connection keep-alive time
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30s"
+	KeepAliveTime metav1.Duration `json:"keepAliveTime,omitempty"`
+
+	// Connection keep-alive timeout
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="5s"
+	KeepAliveTimeout metav1.Duration `json:"keepAliveTimeout,omitempty"`
+
+	// Connection health check interval
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30s"
+	HealthCheckInterval metav1.Duration `json:"healthCheckInterval,omitempty"`
+}
+
+// GRPCRetryPolicySpec defines retry policy configuration
+type GRPCRetryPolicySpec struct {
+	// Enable retry policy
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Maximum number of retry attempts
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:default=3
+	MaxAttempts int32 `json:"maxAttempts,omitempty"`
+
+	// Initial retry delay
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="1s"
+	InitialDelay metav1.Duration `json:"initialDelay,omitempty"`
+
+	// Maximum retry delay
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30s"
+	MaxDelay metav1.Duration `json:"maxDelay,omitempty"`
+
+	// Retry delay multiplier
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="2.0"
+	Multiplier string `json:"multiplier,omitempty"`
+
+	// Retryable gRPC status codes
+	// +kubebuilder:validation:Optional
+	RetryableStatusCodes []string `json:"retryableStatusCodes,omitempty"`
+}
+
+// GRPCLoadBalancingSpec defines load balancing configuration
+type GRPCLoadBalancingSpec struct {
+	// Enable load balancing
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Load balancing policy
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=round_robin;pick_first;grpclb;xds
+	// +kubebuilder:default=round_robin
+	Policy string `json:"policy,omitempty"`
+
+	// Alternative endpoints for load balancing
+	// +kubebuilder:validation:Optional
+	Endpoints []GRPCEndpointSpec `json:"endpoints,omitempty"`
+}
+
+// GRPCEndpointSpec defines a gRPC endpoint
+type GRPCEndpointSpec struct {
+	// Endpoint host
+	// +kubebuilder:validation:Required
+	Host string `json:"host"`
+
+	// Endpoint port
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Endpoint weight for load balancing
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=1
+	Weight int32 `json:"weight,omitempty"`
+}
+
+// GRPCCircuitBreakerSpec defines circuit breaker configuration
+type GRPCCircuitBreakerSpec struct {
+	// Enable circuit breaker
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Failure threshold to open circuit
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=5
+	FailureThreshold int32 `json:"failureThreshold,omitempty"`
+
+	// Success threshold to close circuit
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=3
+	SuccessThreshold int32 `json:"successThreshold,omitempty"`
+
+	// Timeout for half-open state
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="60s"
+	HalfOpenTimeout metav1.Duration `json:"halfOpenTimeout,omitempty"`
+
+	// Recovery timeout before attempting to close circuit
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30s"
+	RecoveryTimeout metav1.Duration `json:"recoveryTimeout,omitempty"`
 }
 
 // TeardownPolicySpec defines when and how to teardown roosts
@@ -625,24 +1128,419 @@ type NamespaceIsolationSpec struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-// RBACSpec defines RBAC configuration
+// RBACSpec defines advanced RBAC configuration with enterprise features
 type RBACSpec struct {
 	// Enable RBAC
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Service account for roost operations
-	// +kubebuilder:validation:Optional
-	ServiceAccount string `json:"serviceAccount,omitempty"`
+	// Tenant identifier for scoped permissions
+	// +kubebuilder:validation:Required
+	TenantID string `json:"tenantId"`
 
-	// Additional cluster roles
+	// Identity provider configuration
 	// +kubebuilder:validation:Optional
-	ClusterRoles []string `json:"clusterRoles,omitempty"`
+	IdentityProvider string `json:"identityProvider,omitempty"`
 
-	// Additional roles
+	// Identity provider configuration details
 	// +kubebuilder:validation:Optional
-	Roles []string `json:"roles,omitempty"`
+	IdentityProviderConfig *IdentityProviderConfig `json:"identityProviderConfig,omitempty"`
+
+	// Service accounts to create and manage
+	// +kubebuilder:validation:Optional
+	ServiceAccounts []ServiceAccountSpec `json:"serviceAccounts,omitempty"`
+
+	// Roles to create from templates or explicit rules
+	// +kubebuilder:validation:Optional
+	Roles []RoleSpec `json:"roles,omitempty"`
+
+	// Role bindings to create
+	// +kubebuilder:validation:Optional
+	RoleBindings []RoleBindingSpec `json:"roleBindings,omitempty"`
+
+	// Policy templates to use for dynamic generation
+	// +kubebuilder:validation:Optional
+	PolicyTemplates []string `json:"policyTemplates,omitempty"`
+
+	// Template parameters for policy substitution
+	// +kubebuilder:validation:Optional
+	TemplateParameters map[string]string `json:"templateParameters,omitempty"`
+
+	// Audit configuration
+	// +kubebuilder:validation:Optional
+	Audit *AuditConfig `json:"audit,omitempty"`
+
+	// Policy validation settings
+	// +kubebuilder:validation:Optional
+	PolicyValidation *PolicyValidationConfig `json:"policyValidation,omitempty"`
+}
+
+// IdentityProviderConfig defines identity provider integration settings
+type IdentityProviderConfig struct {
+	// OIDC configuration
+	// +kubebuilder:validation:Optional
+	OIDC *OIDCConfig `json:"oidc,omitempty"`
+
+	// LDAP configuration
+	// +kubebuilder:validation:Optional
+	LDAP *LDAPConfig `json:"ldap,omitempty"`
+
+	// Custom provider configuration
+	// +kubebuilder:validation:Optional
+	Custom map[string]string `json:"custom,omitempty"`
+}
+
+// OIDCConfig defines OpenID Connect provider configuration
+type OIDCConfig struct {
+	// OIDC issuer URL
+	// +kubebuilder:validation:Required
+	IssuerURL string `json:"issuerURL"`
+
+	// Client ID for OIDC authentication
+	// +kubebuilder:validation:Required
+	ClientID string `json:"clientID"`
+
+	// Client secret reference
+	// +kubebuilder:validation:Optional
+	ClientSecretRef *SecretReference `json:"clientSecretRef,omitempty"`
+
+	// Additional scopes to request
+	// +kubebuilder:validation:Optional
+	Scopes []string `json:"scopes,omitempty"`
+
+	// Claims mapping for user/group extraction
+	// +kubebuilder:validation:Optional
+	ClaimsMapping *OIDCClaimsMapping `json:"claimsMapping,omitempty"`
+
+	// Token validation settings
+	// +kubebuilder:validation:Optional
+	TokenValidation *TokenValidationConfig `json:"tokenValidation,omitempty"`
+}
+
+// OIDCClaimsMapping defines how to extract user/group information from OIDC tokens
+type OIDCClaimsMapping struct {
+	// Username claim (default: "sub")
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="sub"
+	Username string `json:"username,omitempty"`
+
+	// Groups claim (default: "groups")
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="groups"
+	Groups string `json:"groups,omitempty"`
+
+	// Email claim (default: "email")
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="email"
+	Email string `json:"email,omitempty"`
+
+	// Display name claim (default: "name")
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="name"
+	DisplayName string `json:"displayName,omitempty"`
+
+	// Tenant claim for multi-tenant scenarios
+	// +kubebuilder:validation:Optional
+	Tenant string `json:"tenant,omitempty"`
+}
+
+// TokenValidationConfig defines token validation parameters
+type TokenValidationConfig struct {
+	// Skip token expiry validation
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	SkipExpiryCheck bool `json:"skipExpiryCheck,omitempty"`
+
+	// Skip issuer validation
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	SkipIssuerCheck bool `json:"skipIssuerCheck,omitempty"`
+
+	// Additional audience values to accept
+	// +kubebuilder:validation:Optional
+	Audiences []string `json:"audiences,omitempty"`
+
+	// Clock skew tolerance for token validation
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30s"
+	ClockSkewTolerance metav1.Duration `json:"clockSkewTolerance,omitempty"`
+}
+
+// LDAPConfig defines LDAP provider configuration
+type LDAPConfig struct {
+	// LDAP server URL
+	// +kubebuilder:validation:Required
+	ServerURL string `json:"serverURL"`
+
+	// Bind DN for LDAP authentication
+	// +kubebuilder:validation:Required
+	BindDN string `json:"bindDN"`
+
+	// Bind password reference
+	// +kubebuilder:validation:Required
+	BindPasswordRef *SecretReference `json:"bindPasswordRef"`
+
+	// Base DN for user searches
+	// +kubebuilder:validation:Required
+	UserBaseDN string `json:"userBaseDN"`
+
+	// User search filter
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="(uid=%s)"
+	UserFilter string `json:"userFilter,omitempty"`
+
+	// Base DN for group searches
+	// +kubebuilder:validation:Optional
+	GroupBaseDN string `json:"groupBaseDN,omitempty"`
+
+	// Group search filter
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="(member=%s)"
+	GroupFilter string `json:"groupFilter,omitempty"`
+
+	// TLS configuration
+	// +kubebuilder:validation:Optional
+	TLS *LDAPTLSConfig `json:"tls,omitempty"`
+}
+
+// LDAPTLSConfig defines LDAP TLS settings
+type LDAPTLSConfig struct {
+	// Enable TLS
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Skip TLS verification
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+
+	// CA certificate bundle
+	// +kubebuilder:validation:Optional
+	CABundle []byte `json:"caBundle,omitempty"`
+}
+
+// ServiceAccountSpec defines a service account to create and manage
+type ServiceAccountSpec struct {
+	// Service account name
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Annotations to add to the service account
+	// +kubebuilder:validation:Optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// Image pull secrets to associate
+	// +kubebuilder:validation:Optional
+	ImagePullSecrets []string `json:"imagePullSecrets,omitempty"`
+
+	// Automount service account token
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	AutomountToken bool `json:"automountToken,omitempty"`
+
+	// Lifecycle management settings
+	// +kubebuilder:validation:Optional
+	Lifecycle *ServiceAccountLifecycle `json:"lifecycle,omitempty"`
+}
+
+// ServiceAccountLifecycle defines service account lifecycle management
+type ServiceAccountLifecycle struct {
+	// Token rotation policy
+	// +kubebuilder:validation:Optional
+	TokenRotation *TokenRotationPolicy `json:"tokenRotation,omitempty"`
+
+	// Cleanup policy when roost is deleted
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=delete;retain
+	// +kubebuilder:default=delete
+	CleanupPolicy string `json:"cleanupPolicy,omitempty"`
+}
+
+// TokenRotationPolicy defines automatic token rotation
+type TokenRotationPolicy struct {
+	// Enable automatic token rotation
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Rotation interval
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="24h"
+	RotationInterval metav1.Duration `json:"rotationInterval,omitempty"`
+
+	// Overlap period for graceful rotation
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="2h"
+	OverlapPeriod metav1.Duration `json:"overlapPeriod,omitempty"`
+}
+
+// RoleSpec defines a role to create
+type RoleSpec struct {
+	// Role name
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Policy template to use for role generation
+	// +kubebuilder:validation:Optional
+	Template string `json:"template,omitempty"`
+
+	// Explicit policy rules (used if template is not specified)
+	// +kubebuilder:validation:Optional
+	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
+
+	// Role type (Role or ClusterRole)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=Role;ClusterRole
+	// +kubebuilder:default=Role
+	Type string `json:"type,omitempty"`
+
+	// Template parameters for this role
+	// +kubebuilder:validation:Optional
+	TemplateParameters map[string]string `json:"templateParameters,omitempty"`
+
+	// Role annotations
+	// +kubebuilder:validation:Optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// RoleBindingSpec defines a role binding to create
+type RoleBindingSpec struct {
+	// Role binding name
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Subjects for the role binding
+	// +kubebuilder:validation:Required
+	Subjects []SubjectSpec `json:"subjects"`
+
+	// Role reference
+	// +kubebuilder:validation:Required
+	RoleRef RoleRefSpec `json:"roleRef"`
+
+	// Role binding type (RoleBinding or ClusterRoleBinding)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=RoleBinding;ClusterRoleBinding
+	// +kubebuilder:default=RoleBinding
+	Type string `json:"type,omitempty"`
+
+	// Role binding annotations
+	// +kubebuilder:validation:Optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// SubjectSpec defines a subject for role bindings
+type SubjectSpec struct {
+	// Subject kind
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=User;Group;ServiceAccount
+	Kind string `json:"kind"`
+
+	// Subject name
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Namespace for ServiceAccount subjects
+	// +kubebuilder:validation:Optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// Identity provider validation
+	// +kubebuilder:validation:Optional
+	ValidateWithProvider bool `json:"validateWithProvider,omitempty"`
+}
+
+// RoleRefSpec defines a role reference
+type RoleRefSpec struct {
+	// Role kind
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=Role;ClusterRole
+	Kind string `json:"kind"`
+
+	// Role name
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// API group (default: rbac.authorization.k8s.io)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="rbac.authorization.k8s.io"
+	APIGroup string `json:"apiGroup,omitempty"`
+}
+
+// AuditConfig defines audit logging configuration
+type AuditConfig struct {
+	// Enable audit logging
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Audit events to log
+	// +kubebuilder:validation:Optional
+	Events []string `json:"events,omitempty"`
+
+	// Audit log retention period
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30d"
+	RetentionPeriod string `json:"retentionPeriod,omitempty"`
+
+	// External audit webhook
+	// +kubebuilder:validation:Optional
+	WebhookURL string `json:"webhookURL,omitempty"`
+
+	// Audit log level
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=minimal;standard;detailed
+	// +kubebuilder:default=standard
+	Level string `json:"level,omitempty"`
+}
+
+// PolicyValidationConfig defines policy validation settings
+type PolicyValidationConfig struct {
+	// Enable policy validation
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Validation mode
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=strict;warn;disabled
+	// +kubebuilder:default=strict
+	Mode string `json:"mode,omitempty"`
+
+	// Check for least privilege violations
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	CheckLeastPrivilege bool `json:"checkLeastPrivilege,omitempty"`
+
+	// Check for privilege escalation risks
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	CheckPrivilegeEscalation bool `json:"checkPrivilegeEscalation,omitempty"`
+
+	// Custom validation rules
+	// +kubebuilder:validation:Optional
+	CustomRules []ValidationRule `json:"customRules,omitempty"`
+}
+
+// ValidationRule defines a custom policy validation rule
+type ValidationRule struct {
+	// Rule name
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Rule description
+	// +kubebuilder:validation:Optional
+	Description string `json:"description,omitempty"`
+
+	// Rule expression (CEL or regex)
+	// +kubebuilder:validation:Required
+	Expression string `json:"expression"`
+
+	// Rule severity
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=error;warning;info
+	// +kubebuilder:default=warning
+	Severity string `json:"severity,omitempty"`
 }
 
 // NetworkPolicySpec defines network policy configuration
@@ -880,6 +1778,10 @@ type ManagedRoostStatus struct {
 	// +kubebuilder:validation:Optional
 	Observability *ObservabilityStatus `json:"observability,omitempty"`
 
+	// Lifecycle tracking information
+	// +kubebuilder:validation:Optional
+	Lifecycle *LifecycleStatus `json:"lifecycle,omitempty"`
+
 	// Last update timestamp
 	// +kubebuilder:validation:Optional
 	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
@@ -1058,6 +1960,48 @@ type LogOutputStatus struct {
 	// Error message
 	// +kubebuilder:validation:Optional
 	Error string `json:"error,omitempty"`
+}
+
+// LifecycleStatus extends the CRD with lifecycle tracking information
+type LifecycleStatus struct {
+	// Creation timestamp
+	// +kubebuilder:validation:Optional
+	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
+
+	// Last activity timestamp
+	// +kubebuilder:validation:Optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// Lifecycle events
+	// +kubebuilder:validation:Optional
+	Events []LifecycleEventRecord `json:"events,omitempty"`
+
+	// Event counters by type
+	// +kubebuilder:validation:Optional
+	EventCounts map[string]int32 `json:"eventCounts,omitempty"`
+
+	// Phase durations
+	// +kubebuilder:validation:Optional
+	PhaseDurations map[string]metav1.Duration `json:"phaseDurations,omitempty"`
+}
+
+// LifecycleEventRecord represents a recorded lifecycle event
+type LifecycleEventRecord struct {
+	// Event type
+	// +kubebuilder:validation:Required
+	Type string `json:"type"`
+
+	// Event timestamp
+	// +kubebuilder:validation:Required
+	Timestamp metav1.Time `json:"timestamp"`
+
+	// Event message
+	// +kubebuilder:validation:Required
+	Message string `json:"message"`
+
+	// Additional event details
+	// +kubebuilder:validation:Optional
+	Details map[string]string `json:"details,omitempty"`
 }
 
 //+kubebuilder:object:root=true

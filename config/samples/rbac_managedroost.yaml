@@ -1,0 +1,260 @@
+apiVersion: roost.birb.party/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: enterprise-rbac-example
+  namespace: roost-system
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+    name: "nginx"
+    version: "1.0.0"
+  
+  tenancy:
+    tenantId: "enterprise-corp"
+    
+    rbac:
+      enabled: true
+      tenantId: "enterprise-corp"
+      
+      # Identity provider integration
+      identityProvider: "corporate-oidc"
+      identityProviderConfig:
+        oidc:
+          issuerURL: "https://auth.enterprise-corp.com"
+          clientID: "roost-keeper-client"
+          clientSecretRef:
+            name: "oidc-client-secret"
+            key: "client-secret"
+          scopes:
+            - "openid"
+            - "profile"
+            - "email"
+            - "groups"
+          claimsMapping:
+            username: "preferred_username"
+            groups: "groups"
+            email: "email"
+            displayName: "name"
+            tenant: "tenant_id"
+          tokenValidation:
+            skipExpiryCheck: false
+            skipIssuerCheck: false
+            audiences:
+              - "roost-keeper"
+            clockSkewTolerance: "30s"
+      
+      # Service accounts with lifecycle management
+      serviceAccounts:
+        - name: "enterprise-roost-operator"
+          annotations:
+            roost-keeper.io/purpose: "enterprise-operations"
+          imagePullSecrets:
+            - "enterprise-registry-secret"
+          automountToken: false
+          lifecycle:
+            cleanupPolicy: "delete"
+            tokenRotation:
+              enabled: true
+              rotationInterval: "24h"
+              overlapPeriod: "2h"
+        
+        - name: "enterprise-roost-viewer"
+          annotations:
+            roost-keeper.io/purpose: "read-only-access"
+          automountToken: true
+          lifecycle:
+            cleanupPolicy: "retain"
+      
+      # Roles using policy templates and custom rules
+      roles:
+        - name: "enterprise-admin"
+          template: "tenant-admin"
+          type: "Role"
+          templateParameters:
+            CustomResource: "enterprise-configs"
+          annotations:
+            roost-keeper.io/security-level: "high"
+        
+        - name: "enterprise-developer"
+          template: "tenant-developer"
+          type: "Role"
+          annotations:
+            roost-keeper.io/security-level: "medium"
+        
+        - name: "enterprise-viewer"
+          template: "roost-viewer"
+          type: "Role"
+          annotations:
+            roost-keeper.io/security-level: "low"
+        
+        - name: "enterprise-cluster-reader"
+          type: "ClusterRole"
+          rules:
+            - apiGroups: [""]
+              resources: ["nodes", "namespaces"]
+              verbs: ["get", "list", "watch"]
+            - apiGroups: ["metrics.k8s.io"]
+              resources: ["nodes", "pods"]
+              verbs: ["get", "list"]
+          annotations:
+            roost-keeper.io/security-level: "medium"
+      
+      # Role bindings connecting users/groups to roles
+      roleBindings:
+        - name: "enterprise-admins-binding"
+          type: "RoleBinding"
+          subjects:
+            - kind: "Group"
+              name: "enterprise-admins"
+              validateWithProvider: true
+          roleRef:
+            kind: "Role"
+            name: "enterprise-admin"
+            apiGroup: "rbac.authorization.k8s.io"
+          annotations:
+            roost-keeper.io/binding-purpose: "admin-access"
+        
+        - name: "enterprise-developers-binding"
+          type: "RoleBinding"
+          subjects:
+            - kind: "Group"
+              name: "enterprise-developers"
+              validateWithProvider: true
+            - kind: "ServiceAccount"
+              name: "enterprise-roost-operator"
+              namespace: "roost-system"
+          roleRef:
+            kind: "Role"
+            name: "enterprise-developer"
+            apiGroup: "rbac.authorization.k8s.io"
+        
+        - name: "enterprise-viewers-binding"
+          type: "RoleBinding"
+          subjects:
+            - kind: "Group"
+              name: "enterprise-viewers"
+              validateWithProvider: true
+            - kind: "ServiceAccount"
+              name: "enterprise-roost-viewer"
+              namespace: "roost-system"
+          roleRef:
+            kind: "Role"
+            name: "enterprise-viewer"
+            apiGroup: "rbac.authorization.k8s.io"
+        
+        - name: "enterprise-cluster-readers-binding"
+          type: "ClusterRoleBinding"
+          subjects:
+            - kind: "Group"
+              name: "enterprise-cluster-readers"
+              validateWithProvider: true
+          roleRef:
+            kind: "ClusterRole"
+            name: "enterprise-cluster-reader"
+            apiGroup: "rbac.authorization.k8s.io"
+      
+      # Policy templates to use
+      policyTemplates:
+        - "tenant-admin"
+        - "tenant-developer" 
+        - "roost-viewer"
+      
+      # Template parameters for substitution
+      templateParameters:
+        Environment: "production"
+        Department: "engineering"
+        CostCenter: "eng-ops-001"
+      
+      # Comprehensive audit configuration
+      audit:
+        enabled: true
+        level: "detailed"
+        events:
+          - "rbac_setup"
+          - "rbac_cleanup"
+          - "permission_denied"
+          - "permission_granted"
+          - "policy_validation"
+          - "identity_provider_auth"
+          - "service_account_created"
+          - "role_created"
+          - "role_binding_created"
+          - "token_rotation"
+          - "policy_template_used"
+        retentionPeriod: "90d"
+        webhookURL: "https://audit.enterprise-corp.com/rbac-events"
+      
+      # Policy validation with custom rules
+      policyValidation:
+        enabled: true
+        mode: "strict"
+        checkLeastPrivilege: true
+        checkPrivilegeEscalation: true
+        customRules:
+          - name: "no-wildcard-resources"
+            description: "Prevent wildcard resource access"
+            expression: "!contains(rule.resources, '*')"
+            severity: "error"
+          
+          - name: "require-resource-names"
+            description: "Require specific resource names for sensitive resources"
+            expression: "rule.resources contains 'secrets' => len(rule.resourceNames) > 0"
+            severity: "warning"
+          
+          - name: "limit-cluster-access"
+            description: "Limit cluster-level permissions"
+            expression: "role.type == 'ClusterRole' => len(subjects) <= 3"
+            severity: "info"
+
+  # Health checks to monitor RBAC setup
+  healthChecks:
+    - name: "rbac-service-accounts"
+      type: "kubernetes"
+      interval: "60s"
+      timeout: "10s"
+      kubernetes:
+        checkPods: false
+        checkDeployments: false
+        checkServices: false
+        customResources:
+          - apiVersion: "v1"
+            kind: "ServiceAccount"
+            healthStrategy: "exists"
+    
+    - name: "rbac-roles"
+      type: "kubernetes"
+      interval: "60s"
+      timeout: "10s"
+      kubernetes:
+        checkPods: false
+        checkDeployments: false
+        checkServices: false
+        customResources:
+          - apiVersion: "rbac.authorization.k8s.io/v1"
+            kind: "Role"
+            healthStrategy: "exists"
+          - apiVersion: "rbac.authorization.k8s.io/v1"
+            kind: "RoleBinding"
+            healthStrategy: "exists"
+
+  # Observability for RBAC operations
+  observability:
+    metrics:
+      enabled: true
+      interval: "30s"
+      custom:
+        - name: "rbac_policy_validation_score"
+          query: "rbac_security_score"
+          type: "gauge"
+        - name: "rbac_setup_duration"
+          query: "rbac_setup_duration_seconds"
+          type: "histogram"
+    
+    tracing:
+      enabled: true
+      samplingRate: "0.1"
+    
+    logging:
+      level: "info"
+      structured: true

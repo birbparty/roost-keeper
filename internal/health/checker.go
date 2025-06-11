@@ -7,11 +7,14 @@ import (
 
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	roostv1alpha1 "github.com/birbparty/roost-keeper/api/v1alpha1"
 	"github.com/birbparty/roost-keeper/internal/health/grpc"
 	"github.com/birbparty/roost-keeper/internal/health/http"
+	promhealth "github.com/birbparty/roost-keeper/internal/health/prometheus"
 	"github.com/birbparty/roost-keeper/internal/health/tcp"
+	"github.com/birbparty/roost-keeper/internal/health/udp"
 	"github.com/birbparty/roost-keeper/internal/telemetry"
 )
 
@@ -26,13 +29,22 @@ type Checker interface {
 
 // HealthChecker implements the Checker interface
 type HealthChecker struct {
-	Logger *zap.Logger
+	Logger    *zap.Logger
+	K8sClient client.Client
 }
 
 // NewChecker creates a new health checker
 func NewChecker(logger *zap.Logger) *HealthChecker {
 	return &HealthChecker{
 		Logger: logger,
+	}
+}
+
+// NewCheckerWithClient creates a new health checker with Kubernetes client
+func NewCheckerWithClient(logger *zap.Logger, k8sClient client.Client) *HealthChecker {
+	return &HealthChecker{
+		Logger:    logger,
+		K8sClient: k8sClient,
 	}
 }
 
@@ -141,6 +153,11 @@ func (hc *HealthChecker) executeHealthCheck(ctx context.Context, roost *roostv1a
 			return false, fmt.Errorf("TCP health check spec is required")
 		}
 		return hc.executeTCPCheck(checkCtx, roost, checkSpec, *checkSpec.TCP)
+	case "udp":
+		if checkSpec.UDP == nil {
+			return false, fmt.Errorf("UDP health check spec is required")
+		}
+		return hc.executeUDPCheck(checkCtx, roost, checkSpec, *checkSpec.UDP)
 	case "grpc":
 		if checkSpec.GRPC == nil {
 			return false, fmt.Errorf("gRPC health check spec is required")
@@ -200,17 +217,59 @@ func (hc *HealthChecker) executeTCPCheck(ctx context.Context, roost *roostv1alph
 	return tcp.ExecuteTCPCheck(ctx, hc.Logger, roost, checkSpec, tcpSpec)
 }
 
+func (hc *HealthChecker) executeUDPCheck(ctx context.Context, roost *roostv1alpha1.ManagedRoost, checkSpec roostv1alpha1.HealthCheckSpec, udpSpec roostv1alpha1.UDPHealthCheckSpec) (bool, error) {
+	// Import the udp package function
+	return udp.ExecuteUDPCheck(ctx, hc.Logger, roost, checkSpec, udpSpec)
+}
+
 func (hc *HealthChecker) executeGRPCCheck(ctx context.Context, roost *roostv1alpha1.ManagedRoost, checkSpec roostv1alpha1.HealthCheckSpec, grpcSpec roostv1alpha1.GRPCHealthCheckSpec) (bool, error) {
 	// Import the grpc package function
 	return grpc.ExecuteGRPCCheck(ctx, hc.Logger, roost, checkSpec, grpcSpec)
 }
 
 func (hc *HealthChecker) executePrometheusCheck(ctx context.Context, roost *roostv1alpha1.ManagedRoost, checkSpec roostv1alpha1.HealthCheckSpec, prometheusSpec roostv1alpha1.PrometheusHealthCheckSpec) (bool, error) {
-	// TODO: Implement Prometheus health check
-	return false, fmt.Errorf("Prometheus health checks not yet implemented")
+	// Use the prometheus package function
+	return promhealth.ExecutePrometheusCheck(ctx, hc.Logger, hc.K8sClient, roost, checkSpec, prometheusSpec)
 }
 
 func (hc *HealthChecker) executeKubernetesCheck(ctx context.Context, roost *roostv1alpha1.ManagedRoost, checkSpec roostv1alpha1.HealthCheckSpec, kubernetesSpec roostv1alpha1.KubernetesHealthCheckSpec) (bool, error) {
-	// TODO: Implement Kubernetes health check
-	return false, fmt.Errorf("Kubernetes health checks not yet implemented")
+	// Import the kubernetes package function
+	if hc.K8sClient == nil {
+		return false, fmt.Errorf("Kubernetes client not available for health check")
+	}
+
+	// Use the kubernetes package function - we need to create a separate package import to avoid circular dependency
+	// For now, inline the call directly
+	checker := &KubernetesChecker{
+		client: hc.K8sClient,
+		logger: hc.Logger,
+	}
+
+	result, err := checker.CheckHealth(ctx, roost, checkSpec, kubernetesSpec)
+	if err != nil {
+		return false, err
+	}
+	return result.Healthy, nil
+}
+
+// KubernetesChecker is a minimal interface to avoid circular imports
+type KubernetesChecker struct {
+	client client.Client
+	logger *zap.Logger
+}
+
+// CheckHealth implements basic Kubernetes health checking
+func (k *KubernetesChecker) CheckHealth(ctx context.Context, roost *roostv1alpha1.ManagedRoost, checkSpec roostv1alpha1.HealthCheckSpec, kubernetesSpec roostv1alpha1.KubernetesHealthCheckSpec) (*KubernetesHealthResult, error) {
+	// This is a placeholder - for the full implementation, we would import the kubernetes package
+	// For now, return a basic implementation
+	return &KubernetesHealthResult{
+		Healthy: false,
+		Message: "Kubernetes health checks not yet fully implemented - feature in development",
+	}, fmt.Errorf("Kubernetes health checks implementation in progress")
+}
+
+// KubernetesHealthResult represents the result of Kubernetes health check
+type KubernetesHealthResult struct {
+	Healthy bool   `json:"healthy"`
+	Message string `json:"message"`
 }

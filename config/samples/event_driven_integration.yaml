@@ -1,0 +1,263 @@
+# Event-driven integration configuration sample
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: roost-keeper-events-config
+  namespace: roost-keeper-system
+data:
+  events-config.yaml: |
+    # Enable or disable the event system
+    enabled: true
+
+    # Kafka configuration
+    kafka:
+      # Kafka broker addresses
+      brokers:
+        - "kafka-broker-1:9092"
+        - "kafka-broker-2:9092"
+        - "kafka-broker-3:9092"
+
+      # Security configuration
+      security:
+        # Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+        protocol: "SASL_SSL"
+        # SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
+        mechanism: "SCRAM-SHA-256"
+        # Username for SASL authentication
+        username: "roost-keeper"
+        # Password reference for SASL authentication
+        passwordRef:
+          name: "kafka-credentials"
+          key: "password"
+        # SSL/TLS configuration
+        tls:
+          enabled: true
+          insecureSkipVerify: false
+
+      # Producer configuration
+      producer:
+        # Required acknowledgments (0, 1, all)
+        acks: "all"
+        # Number of retries
+        retries: 5
+        # Batch size in bytes
+        batchSize: 16384
+        # Linger time before sending batch (ms)
+        lingerMs: 100
+        # Compression type (none, gzip, snappy, lz4, zstd)
+        compression: "gzip"
+        # Enable idempotent producer
+        idempotent: true
+        # Maximum message bytes
+        maxMessageBytes: 1000000
+        # Request timeout
+        requestTimeout: "30s"
+        # Flush frequency
+        flushFrequency: "10s"
+
+      # Consumer configuration
+      consumer:
+        # Consumer group ID
+        groupId: "roost-keeper-consumers"
+        # Auto offset reset (earliest, latest, none)
+        autoOffsetReset: "earliest"
+        # Enable auto commit
+        enableAutoCommit: false
+        # Auto commit interval
+        autoCommitInterval: "1s"
+        # Session timeout
+        sessionTimeout: "30s"
+        # Heartbeat interval
+        heartbeatInterval: "3s"
+        # Fetch size configuration
+        fetchMin: 1
+        fetchMax: 1048576
+        # Maximum processing time
+        maxProcessingTime: "300s"
+        # Number of consumer instances
+        instances: 3
+
+      # Connection configuration
+      connection:
+        # Connection timeout
+        dialTimeout: "10s"
+        # Keep-alive settings
+        keepAlive: "30s"
+        # Maximum idle connections
+        maxIdleConns: 10
+        # Maximum open connections
+        maxOpenConns: 100
+        # Connection retry configuration
+        retryBackoff: "1s"
+        maxRetries: 5
+
+    # Topic configuration
+    topics:
+      # Lifecycle events topic
+      lifecycle: "roost-keeper-lifecycle"
+      # Trigger events topic
+      triggers: "roost-keeper-triggers"
+      # Topic creation settings
+      autoCreate: true
+      defaultPartitions: 3
+      replicationFactor: 2
+      # Retention settings (7 days)
+      retentionMs: 604800000
+
+    # Dead letter queue configuration
+    deadLetterQueue:
+      # Enable dead letter queue
+      enabled: true
+      # Maximum retry attempts before sending to DLQ
+      maxRetries: 3
+      # Retry backoff strategy
+      retryBackoff:
+        initialDelay: "1s"
+        maxDelay: "60s"
+        multiplier: 2.0
+        jitter: true
+      # Storage configuration for DLQ
+      storage:
+        type: "s3"
+        bucket: "roost-keeper-dlq"
+        region: "us-east-1"
+        prefix: "dlq/"
+        accessKeyRef:
+          name: "s3-credentials"
+          key: "access-key"
+        secretKeyRef:
+          name: "s3-credentials"
+          key: "secret-key"
+        encryption: true
+      # DLQ processing interval
+      processingInterval: "5m"
+      # Message retention in DLQ
+      messageRetention: "168h"
+
+    # Event replay configuration
+    replay:
+      # Enable event replay
+      enabled: true
+      # Event retention period for replay
+      retention: "168h"
+      # Batch size for replay operations
+      batchSize: 100
+      # Compression for stored events
+      compression: true
+      # Storage configuration for replay events
+      storage:
+        type: "s3"
+        bucket: "roost-keeper-events"
+        region: "us-east-1"
+        prefix: "events/"
+        accessKeyRef:
+          name: "s3-credentials"
+          key: "access-key"
+        secretKeyRef:
+          name: "s3-credentials"
+          key: "secret-key"
+        encryption: true
+
+    # Schema validation configuration
+    schemaValidation:
+      # Enable schema validation
+      enabled: true
+      # Validation mode (strict, warn, disabled)
+      mode: "strict"
+      # Schema registry configuration
+      registry:
+        # Registry type (internal, confluent, custom)
+        type: "internal"
+      # Cache settings for schemas
+      cache:
+        enabled: true
+        ttl: "1h"
+        maxSize: 1000
+
+    # Circuit breaker configuration
+    circuitBreaker:
+      # Enable circuit breaker
+      enabled: true
+      # Failure threshold to open circuit
+      failureThreshold: 5
+      # Success threshold to close circuit from half-open
+      successThreshold: 3
+      # Timeout for half-open state
+      halfOpenTimeout: "60s"
+      # Recovery timeout before attempting to close circuit
+      recoveryTimeout: "30s"
+      # Maximum number of half-open calls
+      maxHalfOpenCalls: 10
+
+---
+# Kafka credentials secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kafka-credentials
+  namespace: roost-keeper-system
+type: Opaque
+data:
+  password: <base64-encoded-kafka-password>
+
+---
+# S3 credentials secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: s3-credentials
+  namespace: roost-keeper-system
+type: Opaque
+data:
+  access-key: <base64-encoded-s3-access-key>
+  secret-key: <base64-encoded-s3-secret-key>
+
+---
+# Development configuration with minimal setup
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: roost-keeper-events-config-dev
+  namespace: roost-keeper-system
+data:
+  events-config.yaml: |
+    # Development configuration with local Kafka
+    enabled: true
+
+    kafka:
+      brokers:
+        - "localhost:9092"
+      security:
+        protocol: "PLAINTEXT"
+      producer:
+        acks: "1"
+        retries: 3
+        compression: "gzip"
+        requestTimeout: "10s"
+      consumer:
+        groupId: "roost-keeper-dev"
+        autoOffsetReset: "latest"
+        instances: 1
+      connection:
+        dialTimeout: "5s"
+        maxRetries: 3
+
+    topics:
+      lifecycle: "dev-roost-lifecycle"
+      triggers: "dev-roost-triggers"
+      autoCreate: true
+      defaultPartitions: 1
+      replicationFactor: 1
+      retentionMs: 86400000  # 1 day
+
+    deadLetterQueue:
+      enabled: false
+
+    replay:
+      enabled: false
+
+    schemaValidation:
+      enabled: false
+
+    circuitBreaker:
+      enabled: false

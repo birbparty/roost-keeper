@@ -21,6 +21,7 @@ import (
 	roostv1alpha1 "github.com/birbparty/roost-keeper/api/v1alpha1"
 	"github.com/birbparty/roost-keeper/internal/health"
 	"github.com/birbparty/roost-keeper/internal/helm"
+	"github.com/birbparty/roost-keeper/internal/lifecycle"
 	"github.com/birbparty/roost-keeper/internal/telemetry"
 )
 
@@ -43,14 +44,15 @@ const (
 // ManagedRoostReconciler reconciles a ManagedRoost object
 type ManagedRoostReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	Logger        logr.Logger
-	Metrics       *telemetry.OperatorMetrics
-	Recorder      record.EventRecorder
-	Config        *rest.Config
-	ZapLogger     *zap.Logger
-	HelmManager   helm.Manager
-	HealthChecker health.Checker
+	Scheme           *runtime.Scheme
+	Logger           logr.Logger
+	Metrics          *telemetry.OperatorMetrics
+	Recorder         record.EventRecorder
+	Config           *rest.Config
+	ZapLogger        *zap.Logger
+	HelmManager      helm.Manager
+	HealthChecker    health.Checker
+	LifecycleManager *lifecycle.Manager
 }
 
 //+kubebuilder:rbac:groups=roost.birb.party,resources=managedroosts,verbs=get;list;watch;create;update;patch;delete
@@ -222,6 +224,14 @@ func (r *ManagedRoostReconciler) handleDeployingPhase(ctx context.Context, manag
 
 func (r *ManagedRoostReconciler) handleReadyPhase(ctx context.Context, managedRoost *roostv1alpha1.ManagedRoost) (ctrl.Result, error) {
 	log := r.ZapLogger.With(zap.String("phase", "ready"))
+
+	// Use lifecycle manager to process lifecycle logic if available
+	if r.LifecycleManager != nil {
+		if err := r.LifecycleManager.ProcessLifecycle(ctx, managedRoost); err != nil {
+			log.Error("Lifecycle processing failed", zap.Error(err))
+			// Don't fail hard, fall back to basic processing
+		}
+	}
 
 	// Check if upgrade is needed
 	needsUpgrade, err := r.HelmManager.NeedsUpgrade(ctx, managedRoost)

@@ -58,6 +58,10 @@ func (m *mockHelmManager) GetStatus(ctx context.Context, roost *roostv1alpha1.Ma
 	return m.status, m.statusError
 }
 
+func (m *mockHelmManager) Rollback(ctx context.Context, roost *roostv1alpha1.ManagedRoost, revision int) error {
+	return nil // Mock implementation always succeeds
+}
+
 // mockHealthChecker implements the health.Checker interface for testing
 type mockHealthChecker struct {
 	healthResult bool

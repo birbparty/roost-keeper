@@ -1,0 +1,127 @@
+apiVersion: roost.birb.party/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: tenant-example-roost
+  namespace: tenant-a-namespace
+  labels:
+    roost.birb.party/tenant-id: "tenant-a"
+spec:
+  chart:
+    repository:
+      url: "https://charts.bitnami.com/bitnami"
+    name: "nginx"
+    version: "15.4.4"
+    values:
+      inline: |
+        service:
+          type: ClusterIP
+        ingress:
+          enabled: true
+          hostname: tenant-a.example.com
+  
+  tenancy:
+    tenantId: "tenant-a"
+    
+    # RBAC Configuration
+    rbac:
+      enabled: true
+      serviceAccount: "tenant-a-service-account"
+      roles: 
+        - "nginx-manager"
+        - "configmap-reader"
+    
+    # Resource Quota Configuration
+    resourceQuota:
+      enabled: true
+      hard:
+        requests.cpu: "2"
+        requests.memory: "4Gi"
+        limits.cpu: "4"
+        limits.memory: "8Gi"
+        pods: "10"
+        persistentvolumeclaims: "5"
+        services: "3"
+        secrets: "10"
+        configmaps: "10"
+    
+    # Network Policy Configuration
+    networkPolicy:
+      enabled: true
+      ingress:
+        # Allow traffic from other tenant-a pods
+        - from:
+            - podSelector:
+                matchLabels:
+                  roost.birb.party/tenant-id: "tenant-a"
+          ports:
+            - port: 80
+              protocol: TCP
+            - port: 443  
+              protocol: TCP
+        
+        # Allow traffic from ingress controller
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  name: "ingress-nginx"
+          ports:
+            - port: 80
+              protocol: TCP
+            - port: 443
+              protocol: TCP
+      
+      egress:
+        # Allow DNS resolution
+        - to: []
+          ports:
+            - port: 53
+              protocol: UDP
+            - port: 53
+              protocol: TCP
+        
+        # Allow HTTPS to external services
+        - to: []
+          ports:
+            - port: 443
+              protocol: TCP
+        
+        # Allow communication within tenant
+        - to:
+            - podSelector:
+                matchLabels:
+                  roost.birb.party/tenant-id: "tenant-a"
+            - namespaceSelector:
+                matchLabels:
+                  roost.birb.party/tenant-id: "tenant-a"
+
+  # Health Checks
+  healthChecks:
+    - name: "nginx-http"
+      type: "http"
+      http:
+        url: "http://tenant-example-roost-nginx/"
+        expectedCodes: [200]
+      interval: "30s"
+      timeout: "10s"
+      failureThreshold: 3
+
+  # Teardown Policy
+  teardownPolicy:
+    triggers:
+      - type: "timeout"
+        timeout: "24h"
+    requireManualApproval: false
+    dataPreservation:
+      enabled: true
+      preserveResources:
+        - "persistentvolumeclaims"
+        - "secrets"
+
+  # Observability
+  observability:
+    metrics:
+      enabled: true
+      interval: "15s"
+    logging:
+      level: "info"
+      structured: true

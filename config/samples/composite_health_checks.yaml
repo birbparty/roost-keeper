@@ -1,0 +1,561 @@
+apiVersion: roost.birbparty.com/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: enterprise-application
+  namespace: production
+  labels:
+    environment: production
+    tier: enterprise
+    component: web-application
+spec:
+  # Helm chart configuration
+  chart:
+    repository:
+      url: "https://charts.example.com"
+      type: http
+    name: enterprise-web-app
+    version: "2.1.0"
+    values:
+      inline: |
+        replicaCount: 3
+        image:
+          repository: myapp
+          tag: "v2.1.0"
+        service:
+          type: LoadBalancer
+          port: 80
+        ingress:
+          enabled: true
+          className: nginx
+          hosts:
+            - host: app.example.com
+              paths:
+                - path: /
+                  pathType: Prefix
+
+  # Composite health checks with sophisticated logic
+  healthChecks:
+    # Load balancer health check - Entry point
+    - name: load-balancer
+      type: http
+      weight: 2
+      interval: 15s
+      timeout: 5s
+      failureThreshold: 2
+      http:
+        url: "https://app.example.com/health"
+        method: GET
+        expectedCodes: [200, 204]
+        headers:
+          User-Agent: "RoostKeeper/1.0"
+          Accept: "application/json"
+        tls:
+          insecureSkipVerify: false
+
+    # Primary database - Critical component  
+    - name: primary-database
+      type: tcp
+      weight: 10  # Highest weight - most critical
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 3
+      tcp:
+        host: "postgres-primary.db.svc.cluster.local"
+        port: 5432
+        connectionTimeout: 5s
+        enablePooling: true
+        sendData: ""
+        expectedResponse: ""
+
+    # API service health check
+    - name: api-service
+      type: http
+      weight: 8
+      interval: 20s
+      timeout: 8s
+      failureThreshold: 3
+      http:
+        url: "http://api-service.app.svc.cluster.local:8080/api/health"
+        method: GET
+        expectedCodes: [200]
+        expectedBody: '"status":"ok"'
+        headers:
+          Authorization: "Bearer {{ .Values.apiToken }}"
+          Content-Type: "application/json"
+
+    # Cache service - Redis
+    - name: cache-service
+      type: tcp
+      weight: 5
+      interval: 45s
+      timeout: 3s
+      failureThreshold: 2
+      tcp:
+        host: "redis-master.cache.svc.cluster.local"
+        port: 6379
+        connectionTimeout: 2s
+        enablePooling: true
+        sendData: "PING"
+        expectedResponse: "PONG"
+
+    # Metrics and monitoring endpoint
+    - name: metrics-endpoint
+      type: prometheus
+      weight: 2
+      interval: 60s
+      timeout: 15s
+      failureThreshold: 5
+      prometheus:
+        query: 'up{job="api-service"}'
+        threshold: "1"
+        operator: gte
+        endpoint: "http://prometheus.monitoring.svc.cluster.local:9090"
+        queryTimeout: 10s
+        cacheTTL: 5m
+        trendAnalysis:
+          enabled: true
+          timeWindow: 15m
+          improvementThreshold: 10
+          degradationThreshold: 20
+          allowImprovingUnhealthy: false
+        labels:
+          component: "api-service"
+          tier: "backend"
+
+    # Message queue health
+    - name: message-queue
+      type: tcp
+      weight: 6
+      interval: 30s
+      timeout: 5s
+      failureThreshold: 3
+      tcp:
+        host: "rabbitmq.messaging.svc.cluster.local"
+        port: 5672
+        connectionTimeout: 3s
+        enablePooling: false
+
+    # Background worker service
+    - name: worker-service
+      type: grpc
+      weight: 4
+      interval: 40s
+      timeout: 10s
+      failureThreshold: 4
+      grpc:
+        host: "worker-service.app.svc.cluster.local"
+        port: 9090
+        service: "health"
+        tls:
+          enabled: true
+          insecureSkipVerify: false
+          serverName: "worker-service.app.svc.cluster.local"
+        auth:
+          jwt: "{{ .Values.workerJwtToken }}"
+        connectionPool:
+          enabled: true
+          maxConnections: 5
+          maxIdleTime: 60s
+          keepAliveTime: 30s
+          keepAliveTimeout: 5s
+          healthCheckInterval: 30s
+        retryPolicy:
+          enabled: true
+          maxAttempts: 3
+          initialDelay: 1s
+          maxDelay: 10s
+          multiplier: "2.0"
+          retryableStatusCodes: ["UNAVAILABLE", "DEADLINE_EXCEEDED"]
+        circuitBreaker:
+          enabled: true
+          failureThreshold: 5
+          successThreshold: 3
+          halfOpenTimeout: 60s
+          recoveryTimeout: 30s
+        enableStreaming: false
+        metadata:
+          service-version: "v2.1.0"
+          client-id: "roost-keeper"
+
+    # Kubernetes native health checks
+    - name: kubernetes-resources
+      type: kubernetes
+      weight: 7
+      interval: 25s
+      timeout: 15s
+      failureThreshold: 2
+      kubernetes:
+        checkPods: true
+        checkDeployments: true
+        checkServices: true
+        checkDependencies: true
+        checkStatefulSets: false
+        checkDaemonSets: false
+        requiredReadyRatio: 0.8  # 80% of pods must be ready
+        apiTimeout: 5s
+        enableCaching: true
+        cacheTTL: 30s
+        checkPodRestarts: true
+        maxPodRestarts: 5
+        checkResourceLimits: true
+        checkNodeHealth: false
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: enterprise-web-app
+            app.kubernetes.io/instance: enterprise-application
+        customResources:
+          - apiVersion: "networking.istio.io/v1beta1"
+            kind: "VirtualService"
+            healthStrategy: "exists"
+          - apiVersion: "security.istio.io/v1beta1"  
+            kind: "AuthorizationPolicy"
+            healthStrategy: "conditions"
+            expectedConditions:
+              - type: "Ready"
+                status: "True"
+
+    # External dependency - Payment service
+    - name: payment-service
+      type: http
+      weight: 9  # Critical for e-commerce
+      interval: 20s
+      timeout: 12s
+      failureThreshold: 2
+      http:
+        url: "https://api.payment-provider.com/v1/health"
+        method: GET
+        expectedCodes: [200, 201]
+        headers:
+          Authorization: "Bearer {{ .Values.paymentApiToken }}"
+          X-Client-ID: "enterprise-app"
+          X-API-Version: "v1"
+        tls:
+          insecureSkipVerify: false
+
+    # CDN health check
+    - name: cdn-endpoint
+      type: http
+      weight: 3
+      interval: 120s  # Less frequent for CDN
+      timeout: 8s
+      failureThreshold: 3
+      http:
+        url: "https://cdn.example.com/assets/health.json"
+        method: HEAD
+        expectedCodes: [200, 304]
+        headers:
+          Cache-Control: "no-cache"
+
+  # Tenancy configuration for multi-tenant deployment
+  tenancy:
+    tenantId: "enterprise-prod"
+    namespaceIsolation:
+      enabled: true
+      prefix: "ent-prod"
+      labels:
+        tenant: "enterprise"
+        environment: "production"
+        billing-tier: "premium"
+    rbac:
+      enabled: true
+      serviceAccount: "enterprise-roost-sa"
+      clusterRoles: ["roost-reader", "monitoring-reader"]
+      roles: ["app-manager"]
+    networkPolicy:
+      enabled: true
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  name: "ingress-nginx"
+            - namespaceSelector:
+                matchLabels:
+                  name: "monitoring"
+          ports:
+            - protocol: TCP
+              port: 80
+            - protocol: TCP  
+              port: 443
+      egress:
+        - to:
+            - namespaceSelector:
+                matchLabels:
+                  name: "db"
+          ports:
+            - protocol: TCP
+              port: 5432
+        - to: []  # Allow all external egress
+          ports:
+            - protocol: TCP
+              port: 443
+    resourceQuota:
+      enabled: true
+      hard:
+        requests.cpu: "4"
+        requests.memory: "8Gi"
+        limits.cpu: "8"
+        limits.memory: "16Gi"
+        persistentvolumeclaims: "4"
+        pods: "20"
+
+  # Teardown policy for cost management
+  teardownPolicy:
+    triggers:
+      # Automatic teardown after 24 hours for cost control
+      - type: timeout
+        timeout: 24h
+      # Teardown if failure count exceeds threshold
+      - type: failure_count
+        failureCount: 10
+      # Teardown if resource usage is too high
+      - type: resource_threshold
+        resourceThreshold:
+          memory: "20Gi"
+          cpu: "10"
+          storage: "100Gi"
+      # Scheduled teardown during maintenance window
+      - type: schedule
+        schedule: "0 2 * * 0"  # 2 AM every Sunday
+    requireManualApproval: false
+    dataPreservation:
+      enabled: true
+      backupPolicy:
+        schedule: "0 1 * * *"  # Daily at 1 AM
+        retention: "7d"
+        storage:
+          type: "s3"
+          config:
+            bucket: "enterprise-backups"
+            region: "us-west-2"
+            endpoint: "s3.amazonaws.com"
+      preserveResources:
+        - "Secret"
+        - "ConfigMap"
+        - "PersistentVolumeClaim"
+    cleanup:
+      gracePeriod: 60s
+      force: true
+      order:
+        - "Pod"
+        - "Service"
+        - "Deployment"
+        - "StatefulSet"
+        - "PersistentVolumeClaim"
+
+  # Comprehensive observability configuration
+  observability:
+    metrics:
+      enabled: true
+      interval: 15s
+      custom:
+        - name: "roost_health_score"
+          query: 'sum(roost_health_check_success) / count(roost_health_check_success)'
+          type: "gauge"
+        - name: "roost_response_time_p95"
+          query: 'histogram_quantile(0.95, rate(roost_health_check_duration_seconds_bucket[5m]))'
+          type: "gauge"
+        - name: "roost_failure_rate"
+          query: 'rate(roost_health_check_failures_total[5m])'
+          type: "gauge"
+    tracing:
+      enabled: true
+      samplingRate: "0.1"  # 10% sampling
+      endpoint:
+        url: "http://jaeger-collector.tracing.svc.cluster.local:14268/api/traces"
+        auth:
+          headers:
+            X-Tenant-ID: "enterprise-prod"
+    logging:
+      level: "info"
+      structured: true
+      outputs:
+        - type: "http"
+          config:
+            url: "http://elasticsearch.logging.svc.cluster.local:9200/_bulk"
+            index: "roost-logs"
+            auth_type: "basic"
+            username: "roost-logger"
+            password: "{{ .Values.elasticPassword }}"
+        - type: "file"
+          config:
+            path: "/var/log/roost/health.log"
+            rotation: "daily"
+            retention: "7d"
+
+  # Operational metadata
+  metadata:
+    owner: "platform-team"
+    cost-center: "engineering"
+    project: "enterprise-platform"
+    compliance: "sox,pci-dss"
+    support-tier: "premium"
+    backup-required: "true"
+    monitoring-tier: "enhanced"
+
+---
+# Additional configuration for composite health logic
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: composite-health-config
+  namespace: production
+data:
+  # Composite health evaluation settings
+  evaluation_config.yaml: |
+    # Global health evaluation settings
+    health_evaluation:
+      # Overall scoring strategy
+      scoring_strategy: "weighted_average"  # weighted_average, weighted_sum, threshold
+      
+      # Thresholds for health status determination
+      healthy_threshold: 0.85      # 85% score = healthy
+      degraded_threshold: 0.60     # 60% score = degraded
+      unhealthy_threshold: 0.40    # <40% score = unhealthy
+      
+      # Penalty settings for failures
+      enable_penalties: true
+      penalty_multiplier: 1.5      # Multiply weight by this for failures
+      failure_weight: 2.0          # Extra weight for failures in weighted_sum
+      
+      # Circuit breaker defaults
+      circuit_breaker:
+        failure_threshold: 5
+        success_threshold: 3
+        timeout: 60s
+        half_open_timeout: 30s
+      
+      # Cache defaults
+      cache:
+        default_ttl: 30s
+        max_entries: 1000
+        cleanup_interval: 60s
+      
+      # Anomaly detection settings
+      anomaly_detection:
+        enabled: true
+        response_time_multiplier: 2.0
+        failure_rate_threshold: 0.2
+        trend_deviation_factor: 2.5
+        min_sample_size: 10
+        confidence_threshold: 0.8
+      
+      # Audit settings
+      audit:
+        enabled: true
+        max_events: 1000
+        export_format: "json"
+        retention_period: "7d"
+      
+      # Dependency resolution
+      dependencies:
+        enable_parallel_execution: true
+        max_parallelism: 5
+        dependency_timeout: 300s
+      
+      # Logical expression evaluation
+      expressions:
+        default_operator: "AND"
+        enable_caching: true
+        cache_ttl: 5m
+        max_expression_depth: 10
+
+  # Health check weights and priorities
+  weights_config.yaml: |
+    # Weight configuration for different types of checks
+    check_weights:
+      # Database checks are most critical
+      database: 10
+      primary-database: 10
+      
+      # Core application services
+      api-service: 8
+      kubernetes-resources: 7
+      message-queue: 6
+      
+      # Supporting services  
+      cache-service: 5
+      worker-service: 4
+      
+      # External dependencies
+      payment-service: 9  # Critical for business
+      
+      # Infrastructure components
+      load-balancer: 2
+      metrics-endpoint: 2
+      cdn-endpoint: 3
+    
+    # Priority groups for dependency ordering
+    priority_groups:
+      infrastructure:
+        - load-balancer
+        - kubernetes-resources
+      
+      data_layer:
+        - primary-database
+        - cache-service
+        - message-queue
+      
+      application_layer:
+        - api-service
+        - worker-service
+      
+      external_services:
+        - payment-service
+        - cdn-endpoint
+      
+      monitoring:
+        - metrics-endpoint
+
+  # Advanced logical expressions for health evaluation
+  logic_expressions.yaml: |
+    # Complex health evaluation expressions
+    expressions:
+      # Critical path: Database AND API must be healthy
+      critical_path: "(primary-database AND api-service)"
+      
+      # Core services: Most core services must be healthy
+      core_services: "(primary-database AND api-service AND kubernetes-resources)"
+      
+      # Business critical: Payment OR cached payment data available
+      business_critical: "(payment-service OR (cache-service AND primary-database))"
+      
+      # Infrastructure health: Load balancer AND (cache OR direct DB)
+      infrastructure: "(load-balancer AND (cache-service OR primary-database))"
+      
+      # Complete health: All major systems operational
+      complete_health: |
+        (primary-database AND api-service AND kubernetes-resources) AND
+        (cache-service OR message-queue) AND
+        (load-balancer OR cdn-endpoint) AND
+        (NOT metrics-endpoint OR metrics-endpoint)
+      
+      # Degraded mode: Core functionality available but limited
+      degraded_mode: |
+        (primary-database AND api-service) AND
+        (load-balancer OR cdn-endpoint)
+      
+      # Minimum viable: Absolute minimum for operation
+      minimum_viable: "(primary-database AND api-service)"
+
+---
+# Service monitor for Prometheus metrics collection
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: composite-health-metrics
+  namespace: production
+  labels:
+    app: roost-keeper
+    component: health-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: roost-keeper
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+      scheme: http
+  namespaceSelector:
+    matchNames:
+      - production
