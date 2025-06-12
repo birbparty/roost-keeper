@@ -1,0 +1,43 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: {{ include "roost-keeper.fullname" . }}-validating-webhook
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+  {{- with .Values.extra.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+    {{- if .Values.webhook.certManager.enabled }}
+    cert-manager.io/inject-ca-from: {{ include "roost-keeper.namespace" . }}/{{ include "roost-keeper.webhookCertificateName" . }}
+    {{- end }}
+  {{- end }}
+webhooks:
+- name: managedroost.roost.birb.party
+  clientConfig:
+    service:
+      name: {{ include "roost-keeper.webhookServiceName" . }}
+      namespace: {{ include "roost-keeper.namespace" . }}
+      path: /validate-roost-birb-party-v1alpha1-managedroost
+    {{- if not .Values.webhook.certManager.enabled }}
+    caBundle: {{ .Values.webhook.certificates.ca.crt }}
+    {{- end }}
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["roost.birb.party"]
+    apiVersions: ["v1alpha1"]
+    resources: ["managedroosts"]
+  admissionReviewVersions: {{ .Values.webhook.admissionReviewVersions | toYaml | nindent 2 }}
+  sideEffects: None
+  failurePolicy: {{ .Values.webhook.failurePolicy }}
+  timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+  {{- with .Values.webhook.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.webhook.objectSelector }}
+  objectSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

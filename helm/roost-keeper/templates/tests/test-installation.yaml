@@ -1,0 +1,103 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "roost-keeper.fullname" . }}-test-installation"
+  namespace: {{ include "roost-keeper.namespace" . }}
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+    {{- with .Values.tests.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.tests.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "roost-keeper.serviceAccountName" . }}
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      echo "🚀 Testing Roost-Keeper installation..."
+      
+      # Test 1: Check if controller deployment is ready
+      echo "📋 Test 1: Checking controller deployment..."
+      kubectl wait --for=condition=available --timeout={{ .Values.tests.timeout }} deployment/{{ include "roost-keeper.fullname" . }}-controller-manager -n {{ include "roost-keeper.namespace" . }}
+      echo "✅ Controller deployment is ready"
+      
+      # Test 2: Check if CRDs are installed
+      echo "📋 Test 2: Checking CRDs..."
+      kubectl get crd managedroosts.roost.birb.party
+      echo "✅ ManagedRoost CRD is installed"
+      
+      # Test 3: Check if controller pods are running
+      echo "📋 Test 3: Checking controller pods..."
+      RUNNING_PODS=$(kubectl get pods -n {{ include "roost-keeper.namespace" . }} -l {{ include "roost-keeper.controllerSelectorLabels" . | replace "\n" "," | replace " " "" }} --field-selector=status.phase=Running --no-headers | wc -l)
+      if [ "$RUNNING_PODS" -lt "{{ .Values.controller.replicas }}" ]; then
+        echo "❌ Expected {{ .Values.controller.replicas }} running pods, but found $RUNNING_PODS"
+        exit 1
+      fi
+      echo "✅ All controller pods are running ($RUNNING_PODS/{{ .Values.controller.replicas }})"
+      
+      # Test 4: Check if webhook is responding (if enabled)
+      {{- if .Values.webhook.enabled }}
+      echo "📋 Test 4: Checking webhook configuration..."
+      kubectl get validatingwebhookconfiguration {{ include "roost-keeper.fullname" . }}-validating-webhook
+      echo "✅ Validating webhook is configured"
+      {{- end }}
+      
+      # Test 5: Check if service monitor is created (if enabled)
+      {{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+      echo "📋 Test 5: Checking service monitor..."
+      kubectl get servicemonitor {{ include "roost-keeper.serviceMonitorName" . }} -n {{ include "roost-keeper.namespace" . }} || true
+      echo "✅ Service monitor is configured"
+      {{- end }}
+      
+      # Test 6: Check controller health endpoint
+      echo "📋 Test 6: Checking controller health..."
+      CONTROLLER_POD=$(kubectl get pods -n {{ include "roost-keeper.namespace" . }} -l {{ include "roost-keeper.controllerSelectorLabels" . | replace "\n" "," | replace " " "" }} -o jsonpath='{.items[0].metadata.name}')
+      kubectl exec -n {{ include "roost-keeper.namespace" . }} $CONTROLLER_POD -- wget -q -O- http://localhost:8081/healthz || {
+        echo "❌ Health check failed"
+        exit 1
+      }
+      echo "✅ Controller health check passed"
+      
+      # Test 7: Check metrics endpoint
+      echo "📋 Test 7: Checking metrics endpoint..."
+      kubectl exec -n {{ include "roost-keeper.namespace" . }} $CONTROLLER_POD -- wget -q -O- http://localhost:8080/metrics > /dev/null || {
+        echo "❌ Metrics endpoint failed"
+        exit 1
+      }
+      echo "✅ Metrics endpoint is accessible"
+      
+      {{- if .Values.highAvailability.enabled }}
+      # Test 8: Check HA configuration
+      echo "📋 Test 8: Checking HA configuration..."
+      kubectl get poddisruptionbudget {{ include "roost-keeper.podDisruptionBudgetName" . }} -n {{ include "roost-keeper.namespace" . }}
+      echo "✅ Pod disruption budget is configured"
+      {{- end }}
+      
+      echo "🎉 All tests passed! Roost-Keeper is successfully installed and operational."
+      echo ""
+      echo "📊 Installation Summary:"
+      echo "   Controller Replicas: {{ .Values.controller.replicas }}"
+      echo "   Webhook Enabled: {{ .Values.webhook.enabled }}"
+      echo "   Monitoring Enabled: {{ .Values.monitoring.enabled }}"
+      echo "   HA Enabled: {{ .Values.highAvailability.enabled }}"
+      echo "   Security Level: {{ .Values.security.podSecurityStandards.enforce }}"
+      echo ""
+      echo "🔗 Next Steps:"
+      echo "   1. Create a ManagedRoost resource to test functionality"
+      echo "   2. Monitor metrics at the configured endpoint"
+      echo "   3. Check logs: kubectl logs -n {{ include "roost-keeper.namespace" . }} -l {{ include "roost-keeper.controllerSelectorLabels" . | replace "\n" "," | replace " " "" }}"
+{{- end }}

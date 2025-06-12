@@ -1,0 +1,93 @@
+# Basic Redis Deployment with TCP Health Check
+# Perfect for: Databases, caching layers, TCP-based services
+
+apiVersion: roost.birb.party/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: basic-redis
+  namespace: default
+  labels:
+    app: redis
+    environment: demo
+    example: basic
+spec:
+  chart:
+    name: redis
+    repository:
+      url: https://charts.bitnami.com/bitnami
+      type: http
+    version: "18.19.4"
+    values:
+      inline: |
+        auth:
+          enabled: false  # Disable auth for simplicity
+        master:
+          persistence:
+            enabled: false  # Disable persistence for demo
+        replica:
+          replicaCount: 1
+          persistence:
+            enabled: false
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+  
+  healthChecks:
+    - name: redis-tcp
+      type: tcp
+      tcp:
+        host: basic-redis-master.default.svc.cluster.local
+        port: 6379
+        # Optional: Test Redis protocol
+        sendData: "*1\r\n$4\r\nPING\r\n"
+        expectedResponse: "+PONG"
+      interval: 30s
+      timeout: 5s
+      failureThreshold: 3
+    
+    - name: kubernetes-pods
+      type: kubernetes
+      kubernetes:
+        resources:
+          - apiVersion: v1
+            kind: Pod
+            labelSelector:
+              app.kubernetes.io/name: redis
+            conditions:
+              - type: Ready
+                status: "True"
+      interval: 15s
+      timeout: 5s
+      failureThreshold: 2
+  
+  teardownPolicy:
+    triggers:
+      - type: timeout
+        timeout: 2h  # Auto-cleanup after 2 hours
+      - type: failure_count
+        failureCount: 5  # Teardown after 5 consecutive health failures
+    cleanup:
+      gracePeriod: 60s  # Longer grace period for data safety
+      force: true
+
+---
+# Usage:
+# kubectl apply -f redis.yaml
+# 
+# Monitor:
+# kubectl get managedroost basic-redis -w
+# kubectl describe managedroost basic-redis
+#
+# Test connectivity:
+# kubectl port-forward svc/basic-redis-master 6379:6379
+# redis-cli -h localhost -p 6379 ping
+#
+# Or test with kubectl:
+# kubectl run redis-client --rm -i --tty --image redis:alpine -- redis-cli -h basic-redis-master.default.svc.cluster.local ping
+#
+# Cleanup:
+# kubectl delete managedroost basic-redis

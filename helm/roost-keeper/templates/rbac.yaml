@@ -1,0 +1,293 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "roost-keeper.fullname" . }}-manager-role
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+# Core ManagedRoost permissions
+- apiGroups:
+  - roost.birb.party
+  resources:
+  - managedroosts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - roost.birb.party
+  resources:
+  - managedroosts/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - roost.birb.party
+  resources:
+  - managedroosts/status
+  verbs:
+  - get
+  - patch
+  - update
+
+# Helm chart management
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  - statefulsets
+  - replicasets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  - endpoints
+  - persistentvolumeclaims
+  - events
+  - configmaps
+  - secrets
+  - serviceaccounts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - roles
+  - rolebindings
+  - clusterroles
+  - clusterrolebindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+
+# Health check permissions
+- apiGroups:
+  - ""
+  resources:
+  - pods/status
+  - services/status
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments/status
+  - daemonsets/status
+  - statefulsets/status
+  verbs:
+  - get
+  - list
+  - watch
+
+# Observability permissions
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  - prometheusrules
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+
+# Cert-manager permissions
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  - certificaterequests
+  - issuers
+  - clusterissuers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+
+# Admission controller permissions
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - mutatingwebhookconfigurations
+  - validatingwebhookconfigurations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+
+# Storage permissions
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
+  - watch
+
+# Security permissions
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - security.openshift.io
+  resources:
+  - securitycontextconstraints
+  verbs:
+  - get
+  - list
+  - watch
+  - use
+
+# Custom rules from values
+{{- with .Values.rbac.rules }}
+{{- toYaml . | nindent 0 }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "roost-keeper.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  {{- if .Values.rbac.useExistingClusterRole }}
+  name: {{ .Values.rbac.useExistingClusterRole }}
+  {{- else }}
+  name: {{ include "roost-keeper.fullname" . }}-manager-role
+  {{- end }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "roost-keeper.serviceAccountName" . }}
+  namespace: {{ include "roost-keeper.namespace" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "roost-keeper.fullname" . }}-leader-election-role
+  namespace: {{ include "roost-keeper.namespace" . }}
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "roost-keeper.fullname" . }}-leader-election-rolebinding
+  namespace: {{ include "roost-keeper.namespace" . }}
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "roost-keeper.fullname" . }}-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "roost-keeper.serviceAccountName" . }}
+  namespace: {{ include "roost-keeper.namespace" . }}
+{{- end }}

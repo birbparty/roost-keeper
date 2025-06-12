@@ -1,0 +1,605 @@
+# Default values for roost-keeper
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+## Global configuration
+global:
+  # -- Global image registry
+  imageRegistry: ""
+  # -- Global image pull secrets
+  imagePullSecrets: []
+  # -- Global storage class
+  storageClass: ""
+  # -- Global namespace override
+  namespace: ""
+
+## Image configuration
+image:
+  # -- Image registry
+  registry: ghcr.io
+  # -- Image repository
+  repository: your-org/roost-keeper
+  # -- Image tag (immutable tags are recommended)
+  tag: ""
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Image pull secrets (local to this chart)
+  pullSecrets: []
+
+## Name overrides
+# -- Override the name of the chart
+nameOverride: ""
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+## Service account configuration
+serviceAccount:
+  # -- Specifies whether a service account should be created
+  create: true
+  # -- Annotations to add to the service account
+  annotations: {}
+  # -- The name of the service account to use
+  name: ""
+  # -- Auto mount service account token
+  automountServiceAccountToken: true
+
+## RBAC configuration
+rbac:
+  # -- Create RBAC resources
+  create: true
+  # -- Additional rules for the cluster role
+  rules: []
+  # -- Use existing cluster role
+  useExistingClusterRole: ""
+
+## Controller configuration
+controller:
+  # -- Number of replicas (should be odd for leader election)
+  replicas: 3
+  
+  # -- Leader election configuration
+  leaderElection:
+    enabled: true
+    id: "roost-keeper-controller"
+    leaseDuration: "15s"
+    renewDeadline: "10s"
+    retryPeriod: "2s"
+  
+  # -- Resource limits and requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+      ephemeral-storage: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+      ephemeral-storage: 100Mi
+  
+  # -- Node selector
+  nodeSelector:
+    kubernetes.io/os: linux
+  
+  # -- Tolerations
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  
+  # -- Affinity rules
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - roost-keeper
+            - key: app.kubernetes.io/component
+              operator: In
+              values:
+              - controller
+          topologyKey: kubernetes.io/hostname
+      - weight: 50
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - roost-keeper
+          topologyKey: topology.kubernetes.io/zone
+  
+  # -- Security context for the pod
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # -- Container security context
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # -- Environment variables
+  env: []
+  
+  # -- Extra volume mounts
+  extraVolumeMounts: []
+  
+  # -- Extra volumes
+  extraVolumes: []
+  
+  # -- Additional command line arguments
+  extraArgs: []
+  
+  # -- Termination grace period seconds
+  terminationGracePeriodSeconds: 30
+  
+  # -- Health check configuration
+  healthCheck:
+    enabled: true
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 8081
+        scheme: HTTP
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 10
+      failureThreshold: 3
+      successThreshold: 1
+    readinessProbe:
+      httpGet:
+        path: /readyz
+        port: 8081
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    startupProbe:
+      httpGet:
+        path: /readyz
+        port: 8081
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+      successThreshold: 1
+
+## Webhook configuration
+webhook:
+  # -- Enable admission webhooks
+  enabled: true
+  
+  # -- Webhook port
+  port: 9443
+  
+  # -- Certificate management
+  certManager:
+    enabled: true
+    issuer:
+      # -- Certificate issuer kind (Issuer or ClusterIssuer)
+      kind: ClusterIssuer
+      # -- Certificate issuer name
+      name: selfsigned-cluster-issuer
+    # -- Certificate duration
+    duration: 2160h # 90 days
+    # -- Certificate renewal before expiry
+    renewBefore: 360h # 15 days
+  
+  # -- Manual certificate configuration (when certManager is disabled)
+  certificates:
+    # -- TLS certificate (base64 encoded)
+    tls.crt: ""
+    # -- TLS private key (base64 encoded)
+    tls.key: ""
+    # -- CA certificate (base64 encoded)
+    ca.crt: ""
+  
+  # -- Failure policy
+  failurePolicy: Fail
+  
+  # -- Admission review versions
+  admissionReviewVersions:
+    - v1
+    - v1beta1
+  
+  # -- Webhook timeout seconds
+  timeoutSeconds: 10
+  
+  # -- Namespace selector
+  namespaceSelector: {}
+  
+  # -- Object selector
+  objectSelector: {}
+
+## Monitoring configuration
+monitoring:
+  # -- Enable monitoring
+  enabled: true
+  
+  # -- Service monitor configuration
+  serviceMonitor:
+    enabled: true
+    # -- Scrape interval
+    interval: 30s
+    # -- Scrape timeout
+    scrapeTimeout: 10s
+    # -- Additional labels
+    labels: {}
+    # -- Additional annotations
+    annotations: {}
+    # -- Metric relabelings
+    metricRelabelings: []
+    # -- Relabelings
+    relabelings: []
+  
+  # -- Prometheus configuration
+  prometheus:
+    enabled: true
+    # -- Prometheus namespace
+    namespace: monitoring
+    # -- Prometheus service name
+    serviceName: prometheus-operated
+  
+  # -- Grafana configuration
+  grafana:
+    enabled: true
+    # -- Grafana namespace
+    namespace: monitoring
+    # -- Install dashboards
+    dashboards:
+      enabled: true
+      # -- Dashboard labels
+      labels:
+        grafana_dashboard: "1"
+      # -- Dashboard annotations
+      annotations: {}
+  
+  # -- Alert manager configuration
+  alertManager:
+    enabled: true
+    # -- Alert rules
+    rules:
+      enabled: true
+      # -- Additional alert rule labels
+      labels: {}
+      # -- Additional alert rule annotations
+      annotations: {}
+
+## Observability configuration
+observability:
+  # -- Enable local observability
+  enabled: true
+  
+  # -- OpenTelemetry configuration
+  otel:
+    enabled: true
+    # -- Service name
+    serviceName: "roost-keeper"
+    # -- Service version
+    serviceVersion: "v0.1.0"
+    # -- Export path for local telemetry
+    exportPath: "/tmp/telemetry"
+    # -- OTLP endpoint
+    endpoint: ""
+    # -- OTLP headers
+    headers: {}
+  
+  # -- Metrics configuration
+  metrics:
+    enabled: true
+    # -- Metrics port
+    port: 8080
+    # -- Metrics path
+    path: "/metrics"
+    # -- Collection interval
+    interval: 30s
+  
+  # -- Tracing configuration
+  tracing:
+    enabled: true
+    # -- Sampling rate
+    samplingRate: 0.1
+    # -- Trace endpoint
+    endpoint: ""
+  
+  # -- Logging configuration
+  logging:
+    enabled: true
+    # -- Log level
+    level: info
+    # -- Log format (console or json)
+    format: json
+    # -- Enable development mode
+    development: false
+
+## Security configuration
+security:
+  # -- Pod security standards
+  podSecurityStandards:
+    # -- Enforce policy
+    enforce: restricted
+    # -- Audit policy
+    audit: restricted
+    # -- Warn policy
+    warn: restricted
+  
+  # -- Network policies
+  networkPolicies:
+    enabled: true
+    # -- Deny all traffic by default
+    denyAll: true
+    # -- Allow traffic to/from roost-keeper system
+    allowRoostKeeperSystem: true
+    # -- Allow traffic to/from monitoring system
+    allowMonitoring: true
+    # -- Additional ingress rules
+    additionalIngress: []
+    # -- Additional egress rules
+    additionalEgress: []
+  
+  # -- Security context constraints (OpenShift)
+  securityContextConstraints:
+    enabled: false
+    # -- SCC name
+    name: "restricted"
+
+## High availability configuration
+highAvailability:
+  # -- Enable HA features
+  enabled: true
+  
+  # -- Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    # -- Minimum available pods
+    minAvailable: 2
+    # -- Maximum unavailable pods (alternative to minAvailable)
+    maxUnavailable: ""
+  
+  # -- Topology spread constraints
+  topologySpreadConstraints:
+    enabled: true
+    # -- Maximum skew
+    maxSkew: 1
+    # -- Topology key
+    topologyKey: topology.kubernetes.io/zone
+    # -- When unsatisfiable
+    whenUnsatisfiable: DoNotSchedule
+    # -- Additional constraints
+    additional: []
+
+## Performance configuration
+performance:
+  # -- Enable performance optimizations
+  enabled: true
+  
+  # -- Maximum concurrent reconciles
+  maxConcurrentReconciles: 10
+  
+  # -- Cache sync period
+  cacheSyncPeriod: "10m"
+  
+  # -- Worker pool configuration
+  workerPool:
+    # -- Worker pool size
+    size: 50
+    # -- Queue depth
+    queueDepth: 1000
+  
+  # -- Cache configuration
+  cache:
+    # -- Cache size
+    size: 1000
+    # -- Cache TTL
+    ttl: "5m"
+  
+  # -- Resource caching
+  resourceCache:
+    enabled: true
+    # -- Cache size
+    size: 500
+    # -- Cache TTL
+    ttl: "2m"
+
+## Networking configuration
+networking:
+  # -- Service configuration
+  service:
+    # -- Service type
+    type: ClusterIP
+    # -- Service annotations
+    annotations: {}
+    # -- Service labels
+    labels: {}
+    # -- Load balancer source ranges
+    loadBalancerSourceRanges: []
+    # -- External traffic policy
+    externalTrafficPolicy: Cluster
+  
+  # -- Metrics service configuration
+  metricsService:
+    # -- Metrics service type
+    type: ClusterIP
+    # -- Metrics service port
+    port: 8443
+    # -- Target port
+    targetPort: 8080
+    # -- Service annotations
+    annotations: {}
+  
+  # -- Webhook service configuration
+  webhookService:
+    # -- Webhook service type
+    type: ClusterIP
+    # -- Webhook service port
+    port: 443
+    # -- Target port
+    targetPort: 9443
+    # -- Service annotations
+    annotations: {}
+
+## Storage configuration
+storage:
+  # -- Enable persistent storage
+  enabled: false
+  
+  # -- Storage class
+  storageClass: ""
+  
+  # -- Access modes
+  accessModes:
+    - ReadWriteOnce
+  
+  # -- Storage size
+  size: 10Gi
+  
+  # -- Additional volume claim annotations
+  annotations: {}
+
+## External dependencies
+certManager:
+  # -- Install cert-manager (as dependency)
+  enabled: true
+  # -- cert-manager namespace
+  namespace: cert-manager
+  # -- Installation timeout
+  installTimeout: "10m"
+
+## Configuration for different environments
+environments:
+  # -- Development environment overrides
+  development:
+    controller:
+      replicas: 1
+      resources:
+        limits:
+          cpu: 200m
+          memory: 256Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+    monitoring:
+      enabled: false
+    security:
+      podSecurityStandards:
+        enforce: baseline
+    observability:
+      logging:
+        level: debug
+        development: true
+    highAvailability:
+      enabled: false
+  
+  # -- Staging environment overrides
+  staging:
+    controller:
+      replicas: 2
+    monitoring:
+      enabled: true
+    security:
+      podSecurityStandards:
+        enforce: restricted
+    highAvailability:
+      enabled: true
+      podDisruptionBudget:
+        minAvailable: 1
+  
+  # -- Production environment overrides
+  production:
+    controller:
+      replicas: 3
+    monitoring:
+      enabled: true
+    security:
+      podSecurityStandards:
+        enforce: restricted
+      networkPolicies:
+        enabled: true
+    highAvailability:
+      enabled: true
+      podDisruptionBudget:
+        minAvailable: 2
+    performance:
+      enabled: true
+
+## Custom resource definitions
+customResourceDefinitions:
+  # -- Install CRDs
+  install: true
+  # -- Keep CRDs on uninstall
+  keep: true
+  # -- CRD conversion strategy
+  conversion:
+    strategy: None
+
+## Upgrade configuration
+upgrade:
+  # -- Upgrade strategy
+  strategy: RollingUpdate
+  
+  # -- Pre-upgrade hooks
+  preUpgrade:
+    enabled: true
+    # -- Create backup before upgrade
+    backup: true
+    # -- Validation before upgrade
+    validate: true
+    # -- Hook timeout
+    timeout: "5m"
+  
+  # -- Post-upgrade hooks
+  postUpgrade:
+    enabled: true
+    # -- Verify installation after upgrade
+    verify: true
+    # -- Run tests after upgrade
+    test: true
+    # -- Hook timeout
+    timeout: "5m"
+
+## Testing configuration
+tests:
+  # -- Enable Helm tests
+  enabled: true
+  # -- Test timeout
+  timeout: "5m"
+  # -- Additional test labels
+  labels: {}
+  # -- Additional test annotations
+  annotations: {}
+
+## Extra configuration
+extra:
+  # -- Extra labels for all resources
+  labels: {}
+  # -- Extra annotations for all resources
+  annotations: {}
+  # -- Extra manifests to deploy
+  manifests: []
+
+## Debug configuration
+debug:
+  # -- Enable debug mode
+  enabled: false
+  # -- Verbose logging
+  verbose: false

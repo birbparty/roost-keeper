@@ -1,0 +1,51 @@
+apiVersion: v2
+name: roost-keeper
+description: A Helm chart for Roost-Keeper - Advanced Kubernetes Operator for Helm Deployments
+type: application
+version: 0.1.0
+appVersion: "v0.1.0"
+keywords:
+  - kubernetes
+  - operator
+  - helm
+  - deployment
+  - lifecycle
+  - gitops
+  - automation
+home: https://github.com/your-org/roost-keeper
+sources:
+  - https://github.com/your-org/roost-keeper
+maintainers:
+  - name: Roost-Keeper Team
+    email: team@roost-keeper.io
+    url: https://roost-keeper.io
+# Note: Optional dependencies should be installed separately
+# Dependencies:
+# - cert-manager (for webhook certificates)
+# - kube-prometheus-stack (for monitoring)  
+# - grafana (for dashboards)
+annotations:
+  category: Infrastructure
+  licenses: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Full Lifecycle
+  artifacthub.io/containsSecurityUpdates: "true"
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial Helm chart release
+    - kind: added  
+      description: Multi-environment support
+    - kind: added
+      description: Comprehensive security policies
+    - kind: added
+      description: High availability configuration
+  artifacthub.io/screenshots: |
+    - title: Roost-Keeper Dashboard
+      url: https://roost-keeper.io/screenshots/dashboard.png
+    - title: Health Monitoring
+      url: https://roost-keeper.io/screenshots/health.png
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://docs.roost-keeper.io
+    - name: Support
+      url: https://github.com/your-org/roost-keeper/issues

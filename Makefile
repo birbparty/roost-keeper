@@ -340,3 +340,183 @@ ci-security: gosec ## CI security scan target
 
 .PHONY: ci-all
 ci-all: ci-test ci-lint ci-security ## Run all CI checks
+
+##@ Release Management
+
+.PHONY: release-check
+release-check: ## Check if ready for release
+	@echo "Checking release readiness..."
+	@git status --porcelain | grep -q . && echo "❌ Working directory not clean" && exit 1 || echo "✅ Working directory clean"
+	@make test > /dev/null 2>&1 && echo "✅ Tests passing" || (echo "❌ Tests failing" && exit 1)
+	@make lint > /dev/null 2>&1 && echo "✅ Lint passing" || (echo "❌ Lint failing" && exit 1)
+	@make security > /dev/null 2>&1 && echo "✅ Security scan passing" || (echo "❌ Security scan failing" && exit 1)
+	@echo "🚀 Ready for release!"
+
+.PHONY: release-prepare
+release-prepare: ## Prepare for release (update versions, run checks)
+	@read -p "Enter version (e.g., v1.0.0): " VERSION; \
+	if [[ ! "$$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$$ ]]; then \
+		echo "❌ Invalid version format. Use v1.2.3 or v1.2.3-alpha.1"; \
+		exit 1; \
+	fi; \
+	echo "Preparing release $$VERSION..."; \
+	make release-check; \
+	echo "✅ Release $$VERSION is ready to be tagged"
+
+.PHONY: release-notes
+release-notes: ## Generate release notes for current changes
+	@echo "# Release Notes"
+	@echo ""
+	@echo "## Changes since last release"
+	@LAST_TAG=$$(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~10"); \
+	echo "Comparing against: $$LAST_TAG"; \
+	echo ""; \
+	git log $$LAST_TAG..HEAD --pretty=format:"- %s" --reverse
+
+.PHONY: tag-release
+tag-release: ## Create and push release tag
+	@read -p "Enter version to tag (e.g., v1.0.0): " VERSION; \
+	if [[ ! "$$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$$ ]]; then \
+		echo "❌ Invalid version format. Use v1.2.3 or v1.2.3-alpha.1"; \
+		exit 1; \
+	fi; \
+	echo "Creating and pushing tag $$VERSION..."; \
+	git tag -a "$$VERSION" -m "Release $$VERSION"; \
+	git push origin "$$VERSION"; \
+	echo "✅ Tag $$VERSION created and pushed"
+
+##@ Container Development
+
+.PHONY: docker-build-dev
+docker-build-dev: ## Build development container image
+	$(CONTAINER_TOOL) build -t ${IMG}-dev \
+		--build-arg VERSION=dev \
+		--build-arg COMMIT=$$(git rev-parse HEAD) \
+		--build-arg BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		.
+
+.PHONY: docker-run-dev
+docker-run-dev: docker-build-dev ## Run development container
+	$(CONTAINER_TOOL) run --rm -it \
+		-v $$(pwd)/config:/workspace/config \
+		-v ~/.kube:/home/nonroot/.kube:ro \
+		${IMG}-dev
+
+.PHONY: docker-scan
+docker-scan: ## Scan container image for vulnerabilities
+	@if command -v trivy >/dev/null 2>&1; then \
+		trivy image ${IMG}; \
+	else \
+		echo "Trivy not installed. Install with: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"; \
+	fi
+
+.PHONY: docker-sbom
+docker-sbom: ## Generate SBOM for container image
+	@if command -v syft >/dev/null 2>&1; then \
+		syft ${IMG} -o spdx-json > container-sbom.json; \
+		echo "SBOM generated: container-sbom.json"; \
+	else \
+		echo "Syft not installed. Install with: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin"; \
+	fi
+
+##@ GitHub Integration
+
+.PHONY: gh-check
+gh-check: ## Check GitHub CLI and repository status
+	@if ! command -v gh >/dev/null 2>&1; then \
+		echo "❌ GitHub CLI not installed. Install from: https://github.com/cli/cli#installation"; \
+		exit 1; \
+	fi
+	@echo "✅ GitHub CLI available"
+	@gh auth status
+	@echo "Repository: $$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+
+.PHONY: gh-release-create
+gh-release-create: ## Create GitHub release (requires gh CLI)
+	@make gh-check
+	@read -p "Enter version (e.g., v1.0.0): " VERSION; \
+	read -p "Enter title (default: Release $$VERSION): " TITLE; \
+	TITLE=$${TITLE:-"Release $$VERSION"}; \
+	read -p "Is this a pre-release? (y/N): " PRERELEASE; \
+	PRERELEASE_FLAG=""; \
+	if [[ "$$PRERELEASE" =~ ^[Yy]$$ ]]; then PRERELEASE_FLAG="--prerelease"; fi; \
+	echo "Creating GitHub release..."; \
+	gh release create "$$VERSION" \
+		--title "$$TITLE" \
+		--generate-notes \
+		$$PRERELEASE_FLAG
+
+.PHONY: gh-workflow-status
+gh-workflow-status: ## Check GitHub Actions workflow status
+	@make gh-check
+	@echo "Recent workflow runs:"
+	@gh run list --limit 10
+
+.PHONY: gh-workflow-logs
+gh-workflow-logs: ## View logs for latest workflow run
+	@make gh-check
+	@gh run view --log
+
+##@ Development Productivity
+
+.PHONY: dev-reset
+dev-reset: ## Reset development environment
+	@echo "Resetting development environment..."
+	make clean
+	make deps
+	make manifests generate
+	@echo "✅ Development environment reset"
+
+.PHONY: dev-update
+dev-update: ## Update development dependencies and tools
+	@echo "Updating development environment..."
+	make deps-update
+	make dev-deps
+	@echo "✅ Development environment updated"
+
+.PHONY: quick-start
+quick-start: ## Quick start for new developers
+	@echo "🚀 Setting up Roost-Keeper development environment..."
+	@echo ""
+	@echo "1. Installing dependencies..."
+	make setup-dev
+	@echo ""
+	@echo "2. Running tests..."
+	make test
+	@echo ""
+	@echo "3. Building project..."
+	make build
+	@echo ""
+	@echo "✅ Quick start complete!"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - make run          # Run the operator locally"
+	@echo "  - make dev-stack    # Start observability stack"
+	@echo "  - make help         # Show all available commands"
+
+.PHONY: benchmark
+benchmark: ## Run performance benchmarks
+	@echo "Running benchmarks..."
+	go test -bench=. -benchmem ./internal/performance/...
+	go test -bench=. -benchmem ./internal/health/...
+
+.PHONY: profile
+profile: ## Generate CPU and memory profiles
+	@echo "Generating profiles..."
+	@mkdir -p profiles/
+	go test -cpuprofile=profiles/cpu.prof -memprofile=profiles/mem.prof -bench=. ./internal/performance/...
+	@echo "Profiles generated in profiles/ directory"
+	@echo "View with: go tool pprof profiles/cpu.prof"
+
+.PHONY: mockgen
+mockgen: ## Generate mocks for testing
+	@echo "Generating mocks..."
+	@if command -v mockgen >/dev/null 2>&1; then \
+		find ./internal -name "*.go" -exec grep -l "//go:generate.*mockgen" {} \; | xargs -I {} go generate {}; \
+		echo "✅ Mocks generated"; \
+	else \
+		echo "Installing mockgen..."; \
+		go install github.com/golang/mock/mockgen@latest; \
+		find ./internal -name "*.go" -exec grep -l "//go:generate.*mockgen" {} \; | xargs -I {} go generate {}; \
+		echo "✅ Mocks generated"; \
+	fi

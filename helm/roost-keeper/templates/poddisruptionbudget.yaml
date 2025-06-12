@@ -1,0 +1,24 @@
+{{- if .Values.highAvailability.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "roost-keeper.podDisruptionBudgetName" . }}
+  namespace: {{ include "roost-keeper.namespace" . }}
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+  {{- with .Values.extra.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.highAvailability.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.highAvailability.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.highAvailability.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.highAvailability.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "roost-keeper.controllerSelectorLabels" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,232 @@
+apiVersion: roost-keeper.io/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: security-enabled-roost
+  namespace: roost-system
+  labels:
+    roost-keeper.io/security-level: "trust-based"
+    roost-keeper.io/audit-enabled: "true"
+spec:
+  chart:
+    name: sample-app
+    version: "1.0.0"
+    repository:
+      url: "https://charts.example.com"
+  
+  # Trust-based security configuration
+  security:
+    enabled: true
+    mode: "trust-based"  # Options: trust-based, strict, permissive
+    
+    # Audit logging configuration
+    audit:
+      enabled: true
+      logLevel: "info"
+      destinations:
+        - "structured-logs"
+        - "metrics"
+      retention: "30d"
+    
+    # Secret management with Doppler
+    secrets:
+      provider: "doppler"
+      sync:
+        enabled: true
+        interval: "5m"
+        autoRotate: true
+      projects:
+        - name: "roost-security-enabled-roost"
+          environment: "production"
+    
+    # Policy configuration
+    policies:
+      resourceLimits:
+        enabled: true
+        mode: "warn"  # Options: monitor, warn, info
+        enforce: false  # Trust-based: log but don't block
+      
+      basicSecurity:
+        enabled: true
+        mode: "monitor"
+        enforce: false
+        checkPrivileged: true
+        checkHostAccess: true
+      
+      configuration:
+        enabled: true
+        mode: "warn"
+        enforce: false
+        validateResources: true
+        validateNetworking: true
+      
+      operational:
+        enabled: true
+        mode: "info"
+        enforce: false
+        checkBestPractices: true
+    
+    # Network security (basic isolation)
+    network:
+      enabled: true
+      isolation: "basic"  # Options: none, basic, strict
+      policies:
+        - name: "allow-roost-communication"
+          type: "ingress"
+          action: "allow"
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  roost-keeper.io/managed: "true"
+    
+    # Compliance and reporting
+    compliance:
+      enabled: false  # Disabled as per user requirements
+      frameworks: []
+    
+    # Performance monitoring
+    performance:
+      monitoring: true
+      thresholds:
+        scanDuration: "30s"
+        policyEvaluation: "5s"
+        secretSync: "60s"
+
+  # Tenancy configuration with security
+  tenancy:
+    enabled: true
+    tenantId: "security-demo"
+    
+    rbac:
+      enabled: true
+      tenantId: "security-demo"
+      
+      # Service accounts with security context
+      serviceAccounts:
+        - name: "security-roost-operator"
+          automountToken: false
+          annotations:
+            security.roost-keeper.io/audit: "true"
+            security.roost-keeper.io/monitor: "true"
+        
+        - name: "security-roost-reader"
+          automountToken: false
+          annotations:
+            security.roost-keeper.io/read-only: "true"
+      
+      # Roles with least-privilege principles
+      roles:
+        - name: "security-roost-admin"
+          type: "Role"
+          template: "tenant-admin"
+          templateParameters:
+            tenantId: "security-demo"
+          annotations:
+            security.roost-keeper.io/privileged: "true"
+        
+        - name: "security-roost-viewer"
+          type: "Role"
+          template: "tenant-viewer"
+          templateParameters:
+            tenantId: "security-demo"
+          annotations:
+            security.roost-keeper.io/read-only: "true"
+      
+      # Role bindings with user validation
+      roleBindings:
+        - name: "security-admin-binding"
+          type: "RoleBinding"
+          roleRef:
+            apiGroup: "rbac.authorization.k8s.io"
+            kind: "Role"
+            name: "security-roost-admin"
+          subjects:
+            - kind: "User"
+              name: "admin@company.com"
+              validateWithProvider: true
+            - kind: "ServiceAccount"
+              name: "security-roost-operator"
+              namespace: "roost-system"
+        
+        - name: "security-viewer-binding"
+          type: "RoleBinding"
+          roleRef:
+            apiGroup: "rbac.authorization.k8s.io"
+            kind: "Role"
+            name: "security-roost-viewer"
+          subjects:
+            - kind: "Group"
+              name: "developers@company.com"
+              validateWithProvider: true
+      
+      # Policy validation settings
+      policyValidation:
+        enabled: true
+        mode: "warn"  # Options: strict, warn, disabled
+
+  # Observability with security focus
+  observability:
+    enabled: true
+    
+    metrics:
+      enabled: true
+      interval: 30s
+      security:
+        enabled: true
+        include:
+          - "audit_events"
+          - "policy_violations"
+          - "secret_access"
+          - "resource_access"
+    
+    logging:
+      enabled: true
+      level: "info"
+      security:
+        enabled: true
+        structured: true
+        include:
+          - "audit_trail"
+          - "policy_events"
+          - "access_patterns"
+    
+    tracing:
+      enabled: true
+      security:
+        enabled: true
+        sampleRate: 0.1
+
+  # Health checks with security considerations
+  healthChecks:
+    enabled: true
+    
+    # HTTP health checks with security headers
+    http:
+      - name: "security-app-health"
+        url: "http://security-app:8080/health"
+        interval: 30s
+        timeout: 10s
+        headers:
+          X-Security-Check: "roost-keeper"
+        expectedCodes: [200]
+    
+    # Composite health with security scoring
+    composite:
+      enabled: true
+      checks:
+        - name: "security-posture"
+          type: "security"
+          weight: 0.3
+          threshold: 0.8
+        - name: "audit-compliance"
+          type: "audit"
+          weight: 0.2
+          threshold: 0.9
+
+status:
+  security:
+    enabled: true
+    lastAudit: "2024-01-15T10:30:00Z"
+    policyViolations: 0
+    secretsSynced: 5
+    auditEvents: 150
+    trustScore: 0.95

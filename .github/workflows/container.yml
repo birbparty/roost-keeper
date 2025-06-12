@@ -1,0 +1,380 @@
+name: Container
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    name: Build Container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Set image output
+      id: image
+      run: echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
+
+    - name: Build and push container image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        provenance: true
+        sbom: true
+        build-args: |
+          VERSION=${{ github.ref_name }}
+          COMMIT=${{ github.sha }}
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+  test:
+    name: Test Container
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+    
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    
+    steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Test container image
+      run: |
+        # Extract platform for docker run
+        PLATFORM=$(echo "${{ matrix.platform }}" | sed 's/linux\///')
+        
+        # Pull and test the image
+        docker run --rm --platform ${{ matrix.platform }} \
+          ${{ needs.build.outputs.image }}:${{ github.sha }} \
+          --version
+
+    - name: Test container security
+      run: |
+        # Run basic security tests
+        docker run --rm --platform ${{ matrix.platform }} \
+          --user 1000:1000 \
+          ${{ needs.build.outputs.image }}:${{ github.sha }} \
+          --help
+
+  sign:
+    name: Sign Container
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    
+    steps:
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Sign container image
+      env:
+        COSIGN_EXPERIMENTAL: 1
+      run: |
+        cosign sign --yes ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+
+    - name: Verify signature
+      env:
+        COSIGN_EXPERIMENTAL: 1
+      run: |
+        cosign verify ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+
+  scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    
+    steps:
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Run Trivy vulnerability scanner (table format)
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+        format: 'table'
+
+  multi-registry:
+    name: Multi-Registry Push
+    runs-on: ubuntu-latest
+    needs: [build, test, scan]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    
+    strategy:
+      matrix:
+        registry:
+          - registry: ghcr.io
+            username: ${{ github.actor }}
+            password: GITHUB_TOKEN
+          # Uncomment and configure as needed:
+          # - registry: docker.io
+          #   username: DOCKER_USERNAME
+          #   password: DOCKER_PASSWORD
+          # - registry: quay.io
+          #   username: QUAY_USERNAME
+          #   password: QUAY_PASSWORD
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to ${{ matrix.registry.registry }}
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ matrix.registry.registry }}
+        username: ${{ matrix.registry.username }}
+        password: ${{ secrets[matrix.registry.password] }}
+
+    - name: Extract metadata for ${{ matrix.registry.registry }}
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ matrix.registry.registry }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=sha,prefix={{branch}}-
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push to ${{ matrix.registry.registry }}
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ github.ref_name }}
+          COMMIT=${{ github.sha }}
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+  helm-oci:
+    name: Helm OCI Push
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: '3.13.0'
+
+    - name: Log in to Container Registry
+      run: |
+        echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+
+    - name: Package Helm chart
+      run: |
+        # Update chart version for releases
+        if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/v}
+          sed -i "s/version: .*/version: ${VERSION}/" helm/roost-keeper/Chart.yaml
+          sed -i "s/appVersion: .*/appVersion: ${VERSION}/" helm/roost-keeper/Chart.yaml
+        fi
+        
+        helm package helm/roost-keeper/ --destination .
+
+    - name: Push Helm chart to OCI registry
+      run: |
+        CHART_FILE=$(ls roost-keeper-*.tgz)
+        helm push "${CHART_FILE}" oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+
+  container-structure-test:
+    name: Container Structure Test
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install container-structure-test
+      run: |
+        curl -LO https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64
+        chmod +x container-structure-test-linux-amd64
+        sudo mv container-structure-test-linux-amd64 /usr/local/bin/container-structure-test
+
+    - name: Create container structure test config
+      run: |
+        cat > container-structure-test.yaml << 'EOF'
+        schemaVersion: 2.0.0
+        
+        commandTests:
+          - name: "version command"
+            command: "/usr/local/bin/manager"
+            args: ["--version"]
+            exitCode: 0
+        
+        fileExistenceTests:
+          - name: "manager binary"
+            path: "/usr/local/bin/manager"
+            shouldExist: true
+            permissions: "-rwxr-xr-x"
+        
+        metadataTest:
+          exposedPorts: ["8080", "9443"]
+          user: "nonroot"
+          workdir: "/workspace"
+        EOF
+
+    - name: Run container structure tests
+      run: |
+        container-structure-test test \
+          --image ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }} \
+          --config container-structure-test.yaml
+
+  notification:
+    name: Build Notification
+    runs-on: ubuntu-latest
+    needs: [build, test, scan, sign]
+    if: always() && github.event_name != 'pull_request'
+    
+    steps:
+    - name: Generate build summary
+      run: |
+        echo "# Container Build Summary" > build-summary.md
+        echo "" >> build-summary.md
+        echo "## Build Results" >> build-summary.md
+        echo "" >> build-summary.md
+        echo "- **Build**: ${{ needs.build.result }}" >> build-summary.md
+        echo "- **Test**: ${{ needs.test.result }}" >> build-summary.md
+        echo "- **Security Scan**: ${{ needs.scan.result }}" >> build-summary.md
+        echo "- **Sign**: ${{ needs.sign.result }}" >> build-summary.md
+        echo "" >> build-summary.md
+        echo "**Image**: \`${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}\`" >> build-summary.md
+        echo "" >> build-summary.md
+        echo "Generated on: $(date)" >> build-summary.md
+
+    - name: Upload build summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: container-build-summary
+        path: build-summary.md
+        retention-days: 30
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [build, test, scan, sign]
+    if: always() && github.event_name == 'pull_request'
+    
+    steps:
+    - name: Delete PR image tags
+      continue-on-error: true
+      run: |
+        echo "Cleanup would happen here for PR images"
+        # Note: GitHub Container Registry doesn't support automated cleanup via API
+        # This is a placeholder for future cleanup automation

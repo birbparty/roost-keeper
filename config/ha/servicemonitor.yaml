@@ -1,0 +1,233 @@
+# ServiceMonitor for High Availability Monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: roost-keeper-controller-ha
+  namespace: roost-keeper-system
+  labels:
+    app.kubernetes.io/name: roost-keeper
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/part-of: roost-keeper
+    app.kubernetes.io/managed-by: kustomize
+    control-plane: controller-manager
+    app: roost-keeper
+    monitoring: enabled
+spec:
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app: roost-keeper
+  endpoints:
+  # Metrics endpoint for performance and operational metrics
+  - port: https
+    interval: 30s
+    path: /metrics
+    scheme: https
+    tlsConfig:
+      insecureSkipVerify: true
+    honorLabels: true
+    scrapeTimeout: 10s
+    metricRelabelings:
+    # Add HA-specific labels
+    - sourceLabels: [__name__]
+      regex: 'roost_keeper_.*'
+      targetLabel: ha_deployment
+      replacement: 'multi_replica'
+    - sourceLabels: [__name__]
+      regex: 'roost_keeper_leader_election_.*'
+      targetLabel: ha_component
+      replacement: 'leader_election'
+    # Preserve important HA metrics
+    - sourceLabels: [__name__]
+      regex: '(roost_keeper_leader_election_changes_total|roost_keeper_reconcile_.*|roost_keeper_.*_errors_total)'
+      action: keep
+  
+  # Health endpoint for availability monitoring
+  - port: health
+    interval: 15s
+    path: /healthz
+    scheme: http
+    honorLabels: true
+    scrapeTimeout: 5s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'up'
+      targetLabel: ha_health_check
+      replacement: 'liveness'
+  
+  # Readiness endpoint for HA status
+  - port: health
+    interval: 15s
+    path: /readyz
+    scheme: http
+    honorLabels: true
+    scrapeTimeout: 5s
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'up'
+      targetLabel: ha_health_check
+      replacement: 'readiness'
+
+  # Additional labeling for HA context
+  namespaceSelector:
+    matchNames:
+    - roost-keeper-system
+  
+  # Target limits for HA monitoring
+  targetLimit: 10  # 3 replicas + buffer
+  sampleLimit: 10000
+---
+# PrometheusRule for HA Alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: roost-keeper-ha-alerts
+  namespace: roost-keeper-system
+  labels:
+    app.kubernetes.io/name: roost-keeper
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/part-of: roost-keeper
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: roost-keeper.ha
+    interval: 30s
+    rules:
+    # High Availability Alerts
+    - alert: RoostKeeperHAInsufficientReplicas
+      expr: |
+        (
+          count(up{job=~".*roost-keeper.*", instance=~".*:8081"} == 1) < 2
+        ) or (
+          count(kube_deployment_status_replicas_ready{deployment="roost-keeper-controller-manager", namespace="roost-keeper-system"}) < 2
+        )
+      for: 2m
+      labels:
+        severity: critical
+        component: ha
+        service: roost-keeper
+      annotations:
+        summary: "Roost-Keeper HA has insufficient healthy replicas"
+        description: "Roost-Keeper controller has {{ $value }} healthy replicas, but requires at least 2 for high availability. This affects fault tolerance and could lead to service disruption."
+        runbook_url: "https://docs.roost-keeper.io/runbooks/ha-insufficient-replicas"
+    
+    - alert: RoostKeeperLeaderElectionFailure
+      expr: |
+        increase(roost_keeper_leader_election_changes_total[5m]) > 3
+      for: 1m
+      labels:
+        severity: warning
+        component: ha
+        service: roost-keeper
+      annotations:
+        summary: "Roost-Keeper leader election is unstable"
+        description: "Leader election has changed {{ $value }} times in the last 5 minutes, indicating potential instability in the HA setup."
+        runbook_url: "https://docs.roost-keeper.io/runbooks/leader-election-instability"
+    
+    - alert: RoostKeeperHADeploymentNotReady
+      expr: |
+        kube_deployment_status_replicas_ready{deployment="roost-keeper-controller-manager", namespace="roost-keeper-system"} 
+        != 
+        kube_deployment_spec_replicas{deployment="roost-keeper-controller-manager", namespace="roost-keeper-system"}
+      for: 5m
+      labels:
+        severity: warning
+        component: ha
+        service: roost-keeper
+      annotations:
+        summary: "Roost-Keeper HA deployment has unready replicas"
+        description: "Deployment has {{ $value }} ready replicas out of {{ query \"kube_deployment_spec_replicas{deployment='roost-keeper-controller-manager', namespace='roost-keeper-system'}\" | first | value }} desired replicas."
+        runbook_url: "https://docs.roost-keeper.io/runbooks/ha-deployment-not-ready"
+    
+    - alert: RoostKeeperHAHighReconcileErrors
+      expr: |
+        rate(roost_keeper_reconcile_errors_total[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+        component: ha
+        service: roost-keeper
+      annotations:
+        summary: "Roost-Keeper has high reconcile error rate"
+        description: "Reconcile error rate is {{ $value | humanizePercentage }} over the last 5 minutes, which may indicate issues in the HA setup."
+        runbook_url: "https://docs.roost-keeper.io/runbooks/high-reconcile-errors"
+    
+    - alert: RoostKeeperHAMemoryUsageHigh
+      expr: |
+        (
+          container_memory_working_set_bytes{container="manager", pod=~"roost-keeper-controller-manager-.*"}
+          / 
+          container_spec_memory_limit_bytes{container="manager", pod=~"roost-keeper-controller-manager-.*"}
+        ) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        component: ha
+        service: roost-keeper
+      annotations:
+        summary: "Roost-Keeper controller memory usage is high"
+        description: "Controller pod {{ $labels.pod }} memory usage is {{ $value | humanizePercentage }} of the limit."
+        runbook_url: "https://docs.roost-keeper.io/runbooks/high-memory-usage"
+    
+    - alert: RoostKeeperHANoLeader
+      expr: |
+        (
+          count(roost_keeper_leader_election_changes_total) == 0
+        ) or (
+          absent(roost_keeper_leader_election_changes_total)
+        )
+      for: 3m
+      labels:
+        severity: critical
+        component: ha
+        service: roost-keeper
+      annotations:
+        summary: "Roost-Keeper has no active leader"
+        description: "No leader election metrics detected, indicating no active controller leader. This will prevent all reconciliation operations."
+        runbook_url: "https://docs.roost-keeper.io/runbooks/no-leader-elected"
+
+  - name: roost-keeper.ha.slo
+    interval: 60s
+    rules:
+    # SLI/SLO Recording Rules for HA
+    - record: roost_keeper:availability_ratio
+      expr: |
+        (
+          count(up{job=~".*roost-keeper.*", instance=~".*:8081"} == 1)
+          /
+          count(up{job=~".*roost-keeper.*", instance=~".*:8081"})
+        )
+    
+    - record: roost_keeper:leader_election_stability_ratio  
+      expr: |
+        1 - (
+          rate(roost_keeper_leader_election_changes_total[5m]) 
+          / 
+          (1/300)  # Expected: max 1 change per 5 minutes
+        )
+    
+    - record: roost_keeper:reconcile_success_ratio
+      expr: |
+        (
+          rate(roost_keeper_reconcile_total[5m])
+          -
+          rate(roost_keeper_reconcile_errors_total[5m])
+        )
+        /
+        rate(roost_keeper_reconcile_total[5m])
+    
+    # SLO Alerts (99.9% availability target)
+    - alert: RoostKeeperHASLOAvailabilityBreach
+      expr: |
+        roost_keeper:availability_ratio < 0.999
+      for: 1m
+      labels:
+        severity: critical
+        component: ha
+        service: roost-keeper
+        slo: availability
+      annotations:
+        summary: "Roost-Keeper HA availability SLO breach"
+        description: "Current availability is {{ $value | humanizePercentage }}, below the 99.9% SLO target."
+        runbook_url: "https://docs.roost-keeper.io/runbooks/slo-availability-breach"

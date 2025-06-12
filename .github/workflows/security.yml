@@ -1,0 +1,344 @@
+name: Security
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run gosec security scanner
+      run: make security
+
+    - name: Convert gosec output to SARIF
+      run: |
+        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        gosec -fmt sarif -out gosec-results.sarif ./...
+
+    - name: Upload gosec results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: gosec-results.sarif
+
+  vulnerability-scan:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install govulncheck
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run vulnerability check
+      run: govulncheck ./...
+
+    - name: Run dependency vulnerability check
+      run: make check-dependencies
+
+  license-scan:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install go-licenses
+      run: go install github.com/google/go-licenses@latest
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Check license compliance
+      run: |
+        echo "Checking license compliance for all dependencies..."
+        go-licenses check ./...
+
+    - name: Generate license report
+      run: |
+        echo "Generating license report..."
+        go-licenses report ./... > license-report.txt
+
+    - name: Upload license report
+      uses: actions/upload-artifact@v4
+      with:
+        name: license-report
+        path: license-report.txt
+        retention-days: 30
+
+  container-security:
+    name: Container Security
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build container image
+      run: |
+        docker build -t roost-keeper:security-scan .
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'roost-keeper:security-scan'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Run Trivy filesystem scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-fs-results.sarif'
+
+    - name: Upload Trivy filesystem scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-fs-results.sarif'
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Run GitLeaks secret scanner
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}}
+
+  sbom-generation:
+    name: SBOM Generation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install cyclonedx-gomod
+      run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Generate SBOM
+      run: |
+        cyclonedx-gomod mod -json -output roost-keeper-sbom.json
+
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom
+        path: roost-keeper-sbom.json
+        retention-days: 90
+
+    - name: Upload SBOM to release (if this is a release)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./roost-keeper-sbom.json
+        asset_name: roost-keeper-sbom.json
+        asset_content_type: application/json
+
+  security-report:
+    name: Security Report
+    runs-on: ubuntu-latest
+    needs: [security-scan, vulnerability-scan, license-scan, container-security, secret-scan]
+    if: always()
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+
+    - name: Generate security summary
+      run: |
+        echo "# Security Scan Summary" > security-summary.md
+        echo "" >> security-summary.md
+        echo "## Scan Results" >> security-summary.md
+        echo "" >> security-summary.md
+        echo "- **Security Scan**: ${{ needs.security-scan.result }}" >> security-summary.md
+        echo "- **Vulnerability Scan**: ${{ needs.vulnerability-scan.result }}" >> security-summary.md
+        echo "- **License Compliance**: ${{ needs.license-scan.result }}" >> security-summary.md
+        echo "- **Container Security**: ${{ needs.container-security.result }}" >> security-summary.md
+        echo "- **Secret Scan**: ${{ needs.secret-scan.result }}" >> security-summary.md
+        echo "" >> security-summary.md
+        echo "Generated on: $(date)" >> security-summary.md
+
+    - name: Upload security summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-summary
+        path: security-summary.md
+        retention-days: 30
+
+    - name: Comment PR with security results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const summary = fs.readFileSync('security-summary.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary
+          });
+
+  security-policy-check:
+    name: Security Policy Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for security policy
+      run: |
+        if [ ! -f SECURITY.md ]; then
+          echo "⚠️ SECURITY.md file not found. Consider adding a security policy."
+          echo "See: https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository"
+        else
+          echo "✅ SECURITY.md file found"
+        fi
+
+    - name: Check for code scanning configuration
+      run: |
+        if [ ! -f .github/workflows/codeql.yml ] && [ ! -f .github/workflows/security.yml ]; then
+          echo "⚠️ No CodeQL or security scanning workflow found"
+        else
+          echo "✅ Security scanning workflows configured"
+        fi
+
+    - name: Validate Dockerfile security
+      run: |
+        if [ -f Dockerfile ]; then
+          echo "Checking Dockerfile for security best practices..."
+          
+          # Check for non-root user
+          if grep -q "USER.*[^0]" Dockerfile; then
+            echo "✅ Dockerfile uses non-root user"
+          else
+            echo "⚠️ Dockerfile should specify a non-root user"
+          fi
+          
+          # Check for specific version tags
+          if grep -q "FROM.*:latest" Dockerfile; then
+            echo "⚠️ Dockerfile uses 'latest' tag, consider using specific versions"
+          else
+            echo "✅ Dockerfile uses specific version tags"
+          fi
+        fi
+
+  compliance-check:
+    name: Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for required files
+      run: |
+        echo "Checking for compliance files..."
+        
+        files=("LICENSE" "README.md" "go.mod" "go.sum")
+        for file in "${files[@]}"; do
+          if [ -f "$file" ]; then
+            echo "✅ $file found"
+          else
+            echo "❌ $file missing"
+          fi
+        done
+
+    - name: Validate go.mod
+      run: |
+        if [ -f go.mod ]; then
+          echo "Validating go.mod..."
+          go mod verify
+          echo "✅ go.mod validation passed"
+        fi
+
+    - name: Check for CI configuration
+      run: |
+        if [ -d .github/workflows ]; then
+          echo "✅ GitHub Actions workflows found"
+          echo "Configured workflows:"
+          ls -la .github/workflows/
+        else
+          echo "⚠️ No GitHub Actions workflows found"
+        fi

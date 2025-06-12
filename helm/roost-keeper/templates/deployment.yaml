@@ -1,0 +1,92 @@
+{{- include "roost-keeper.validateConfig" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "roost-keeper.fullname" . }}-controller-manager
+  namespace: {{ include "roost-keeper.namespace" . }}
+  labels:
+    {{- include "roost-keeper.controllerLabels" . | nindent 4 }}
+  {{- with .Values.extra.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  strategy:
+    type: {{ .Values.upgrade.strategy }}
+    {{- if eq .Values.upgrade.strategy "RollingUpdate" }}
+    rollingUpdate:
+      {{- if .Values.highAvailability.enabled }}
+      maxUnavailable: 1
+      maxSurge: 1
+      {{- else }}
+      maxUnavailable: 0
+      maxSurge: 1
+      {{- end }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "roost-keeper.controllerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "roost-keeper.controllerSelectorLabels" . | nindent 8 }}
+        {{- with .Values.extra.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+        {{- if .Values.monitoring.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+        checksum/config: {{ include "roost-keeper.configChecksum" . }}
+        {{- with .Values.extra.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "roost-keeper.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "roost-keeper.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.controller.terminationGracePeriodSeconds }}
+      {{- include "roost-keeper.securityContext" . | nindent 6 }}
+      {{- include "roost-keeper.affinity" . | nindent 6 }}
+      {{- include "roost-keeper.nodeSelector" . | nindent 6 }}
+      {{- include "roost-keeper.tolerations" . | nindent 6 }}
+      {{- include "roost-keeper.topologySpreadConstraints" . | nindent 6 }}
+      containers:
+      - name: manager
+        image: {{ include "roost-keeper.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /manager
+        args:
+        {{- include "roost-keeper.controllerArgs" . | nindent 8 }}
+        env:
+        {{- include "roost-keeper.env" . | nindent 8 }}
+        ports:
+        - name: metrics
+          containerPort: {{ .Values.observability.metrics.port }}
+          protocol: TCP
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        {{- if .Values.webhook.enabled }}
+        - name: webhook
+          containerPort: {{ .Values.webhook.port }}
+          protocol: TCP
+        {{- end }}
+        {{- if .Values.controller.healthCheck.enabled }}
+        livenessProbe:
+          {{- toYaml .Values.controller.healthCheck.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.controller.healthCheck.readinessProbe | nindent 10 }}
+        startupProbe:
+          {{- toYaml .Values.controller.healthCheck.startupProbe | nindent 10 }}
+        {{- end }}
+        {{- include "roost-keeper.resources" . | nindent 8 }}
+        {{- include "roost-keeper.containerSecurityContext" . | nindent 8 }}
+        volumeMounts:
+        {{- include "roost-keeper.volumeMounts" . | nindent 8 }}
+      volumes:
+      {{- include "roost-keeper.volumes" . | nindent 6 }}

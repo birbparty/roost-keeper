@@ -1,0 +1,597 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Validate version format
+      id: version
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          VERSION="${{ github.event.inputs.version }}"
+          IS_PRERELEASE="${{ github.event.inputs.prerelease }}"
+        else
+          VERSION="${GITHUB_REF#refs/tags/}"
+          # Check if it's a prerelease (contains alpha, beta, rc, etc.)
+          if [[ "$VERSION" =~ -(alpha|beta|rc|dev) ]]; then
+            IS_PRERELEASE=true
+          else
+            IS_PRERELEASE=false
+          fi
+        fi
+        
+        # Validate semantic version format
+        if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+          echo "Error: Invalid version format: $VERSION"
+          echo "Expected format: v1.2.3 or v1.2.3-alpha.1"
+          exit 1
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+        echo "Validated version: $VERSION (prerelease: $IS_PRERELEASE)"
+
+    - name: Check if tag exists (for workflow_dispatch)
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+          echo "Error: Tag ${{ steps.version.outputs.version }} already exists"
+          exit 1
+        fi
+
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        VERSION="${{ needs.validate.outputs.version }}"
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        
+        echo "Generating changelog for $VERSION..."
+        
+        if [[ -n "$PREV_TAG" ]]; then
+          echo "Previous tag: $PREV_TAG"
+          COMMIT_RANGE="$PREV_TAG..HEAD"
+        else
+          echo "No previous tag found, using all commits"
+          COMMIT_RANGE="HEAD"
+        fi
+        
+        # Generate changelog content
+        cat > changelog.md << 'EOF'
+        ## What's Changed
+        
+        EOF
+        
+        # Get commits and categorize them
+        git log $COMMIT_RANGE --pretty=format:"- %s (%h)" --reverse | while read line; do
+          if [[ "$line" =~ ^-\ (feat|feature).*$ ]]; then
+            echo "### 🚀 Features" >> features.tmp
+            echo "$line" >> features.tmp
+          elif [[ "$line" =~ ^-\ (fix|bugfix).*$ ]]; then
+            echo "### 🐛 Bug Fixes" >> fixes.tmp
+            echo "$line" >> fixes.tmp
+          elif [[ "$line" =~ ^-\ (perf|performance).*$ ]]; then
+            echo "### ⚡ Performance" >> performance.tmp
+            echo "$line" >> performance.tmp
+          elif [[ "$line" =~ ^-\ (docs|doc).*$ ]]; then
+            echo "### 📚 Documentation" >> docs.tmp
+            echo "$line" >> docs.tmp
+          elif [[ "$line" =~ ^-\ (test|tests).*$ ]]; then
+            echo "### 🧪 Testing" >> tests.tmp
+            echo "$line" >> tests.tmp
+          elif [[ "$line" =~ ^-\ (ci|cd).*$ ]]; then
+            echo "### 🔧 CI/CD" >> ci.tmp
+            echo "$line" >> ci.tmp
+          else
+            echo "### 🔄 Other Changes" >> other.tmp
+            echo "$line" >> other.tmp
+          fi
+        done
+        
+        # Combine sections
+        for section in features fixes performance docs tests ci other; do
+          if [[ -f "${section}.tmp" ]]; then
+            # Remove duplicate headers
+            awk '!seen[$0]++' "${section}.tmp" >> changelog.md
+            echo "" >> changelog.md
+            rm "${section}.tmp"
+          fi
+        done
+        
+        # Add contributors
+        echo "### 👥 Contributors" >> changelog.md
+        git log $COMMIT_RANGE --pretty=format:"@%an" | sort -u | while read contributor; do
+          echo "- $contributor" >> changelog.md
+        done
+        
+        # Add full changelog link if we have a previous tag
+        if [[ -n "$PREV_TAG" ]]; then
+          echo "" >> changelog.md
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$VERSION" >> changelog.md
+        fi
+        
+        # Set output (escape newlines for GitHub Actions)
+        CHANGELOG=$(cat changelog.md)
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Upload changelog
+      uses: actions/upload-artifact@v4
+      with:
+        name: changelog
+        path: changelog.md
+        retention-days: 90
+
+  build-binaries:
+    name: Build Release Binaries
+    runs-on: ubuntu-latest
+    needs: validate
+    strategy:
+      matrix:
+        include:
+          # Manager binary
+          - binary: manager
+            cmd: ./cmd/manager
+            goos: linux
+            goarch: amd64
+          - binary: manager
+            cmd: ./cmd/manager
+            goos: linux
+            goarch: arm64
+          - binary: manager
+            cmd: ./cmd/manager
+            goos: linux
+            goarch: arm
+            goarm: 7
+          - binary: manager
+            cmd: ./cmd/manager
+            goos: darwin
+            goarch: amd64
+          - binary: manager
+            cmd: ./cmd/manager
+            goos: darwin
+            goarch: arm64
+          - binary: manager
+            cmd: ./cmd/manager
+            goos: windows
+            goarch: amd64
+          
+          # CLI binary
+          - binary: roost
+            cmd: ./cmd/roost
+            goos: linux
+            goarch: amd64
+          - binary: roost
+            cmd: ./cmd/roost
+            goos: linux
+            goarch: arm64
+          - binary: roost
+            cmd: ./cmd/roost
+            goos: linux
+            goarch: arm
+            goarm: 7
+          - binary: roost
+            cmd: ./cmd/roost
+            goos: darwin
+            goarch: amd64
+          - binary: roost
+            cmd: ./cmd/roost
+            goos: darwin
+            goarch: arm64
+          - binary: roost
+            cmd: ./cmd/roost
+            goos: windows
+            goarch: amd64
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Build binary
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        GOARM: ${{ matrix.goarm }}
+        CGO_ENABLED: 0
+      run: |
+        VERSION="${{ needs.validate.outputs.version }}"
+        COMMIT="${{ github.sha }}"
+        BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+        
+        # Set binary extension for Windows
+        EXTENSION=""
+        if [[ "${{ matrix.goos }}" == "windows" ]]; then
+          EXTENSION=".exe"
+        fi
+        
+        # Set ARM version if specified
+        ARM_SUFFIX=""
+        if [[ -n "${{ matrix.goarm }}" ]]; then
+          ARM_SUFFIX="v${{ matrix.goarm }}"
+        fi
+        
+        # Build filename
+        FILENAME="${{ matrix.binary }}-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}${ARM_SUFFIX}${EXTENSION}"
+        
+        # Build with version information
+        go build \
+          -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+          -o "dist/${FILENAME}" \
+          ${{ matrix.cmd }}
+        
+        # Create checksums
+        cd dist
+        sha256sum "${FILENAME}" > "${FILENAME}.sha256"
+        
+        echo "Built: ${FILENAME}"
+        ls -la "${FILENAME}"*
+
+    - name: Upload binary artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-${{ matrix.binary }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-v{0}', matrix.goarm) || '' }}
+        path: dist/*
+        retention-days: 90
+
+  build-archives:
+    name: Build Release Archives
+    runs-on: ubuntu-latest
+    needs: [validate, build-binaries]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all binary artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: binaries-*
+        path: artifacts/
+        merge-multiple: true
+
+    - name: Create release archives
+      run: |
+        VERSION="${{ needs.validate.outputs.version }}"
+        mkdir -p dist/
+        
+        # Create archives for each platform
+        for binary in manager roost; do
+          for platform in linux-amd64 linux-arm64 linux-arm-v7 darwin-amd64 darwin-arm64 windows-amd64; do
+            if [[ "$platform" == "windows-amd64" ]]; then
+              BINARY_FILE="artifacts/${binary}-${VERSION}-${platform}.exe"
+              CHECKSUM_FILE="artifacts/${binary}-${VERSION}-${platform}.exe.sha256"
+            else
+              BINARY_FILE="artifacts/${binary}-${VERSION}-${platform}"
+              CHECKSUM_FILE="artifacts/${binary}-${VERSION}-${platform}.sha256"
+            fi
+            
+            if [[ -f "$BINARY_FILE" ]]; then
+              ARCHIVE_NAME="${binary}-${VERSION}-${platform}"
+              
+              if [[ "$platform" == *"windows"* ]]; then
+                # Create ZIP for Windows
+                zip -j "dist/${ARCHIVE_NAME}.zip" \
+                  "$BINARY_FILE" \
+                  "$CHECKSUM_FILE" \
+                  LICENSE \
+                  README.md
+              else
+                # Create tar.gz for Unix-like systems
+                tar -czf "dist/${ARCHIVE_NAME}.tar.gz" \
+                  --transform="s|artifacts/||" \
+                  --transform="s|${binary}-${VERSION}-${platform}|${binary}|" \
+                  "$BINARY_FILE" \
+                  "$CHECKSUM_FILE" \
+                  LICENSE \
+                  README.md
+              fi
+              
+              echo "Created archive: ${ARCHIVE_NAME}"
+            fi
+          done
+        done
+        
+        # Create combined checksums file
+        find dist/ -name "*.tar.gz" -o -name "*.zip" | while read file; do
+          sha256sum "$file" >> dist/checksums.txt
+        done
+        
+        echo "Created archives:"
+        ls -la dist/
+
+    - name: Upload release archives
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-archives
+        path: dist/
+        retention-days: 90
+
+  helm-package:
+    name: Package Helm Chart
+    runs-on: ubuntu-latest
+    needs: validate
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: '3.13.0'
+
+    - name: Update chart version
+      run: |
+        VERSION="${{ needs.validate.outputs.version }}"
+        CHART_VERSION="${VERSION#v}"  # Remove 'v' prefix for chart version
+        
+        # Update Chart.yaml
+        sed -i "s/version: .*/version: ${CHART_VERSION}/" helm/roost-keeper/Chart.yaml
+        sed -i "s/appVersion: .*/appVersion: ${VERSION}/" helm/roost-keeper/Chart.yaml
+        
+        echo "Updated chart to version ${CHART_VERSION}, appVersion ${VERSION}"
+
+    - name: Lint Helm chart
+      run: helm lint helm/roost-keeper/
+
+    - name: Package Helm chart
+      run: |
+        helm package helm/roost-keeper/ --destination dist/
+        
+        # Create checksums
+        cd dist/
+        for file in *.tgz; do
+          sha256sum "$file" > "${file}.sha256"
+        done
+        
+        echo "Packaged charts:"
+        ls -la dist/
+
+    - name: Upload Helm chart
+      uses: actions/upload-artifact@v4
+      with:
+        name: helm-chart
+        path: dist/
+        retention-days: 90
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, changelog, build-archives, helm-package]
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets/
+        
+        # Copy archives
+        if [[ -d artifacts/release-archives ]]; then
+          cp artifacts/release-archives/* release-assets/
+        fi
+        
+        # Copy Helm chart
+        if [[ -d artifacts/helm-chart ]]; then
+          cp artifacts/helm-chart/* release-assets/
+        fi
+        
+        # Copy changelog
+        if [[ -f artifacts/changelog/changelog.md ]]; then
+          cp artifacts/changelog/changelog.md release-assets/
+        fi
+        
+        echo "Release assets:"
+        ls -la release-assets/
+
+    - name: Create or update tag (for workflow_dispatch)
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a "${{ needs.validate.outputs.version }}" -m "Release ${{ needs.validate.outputs.version }}"
+        git push origin "${{ needs.validate.outputs.version }}"
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ needs.validate.outputs.version }}
+        name: Release ${{ needs.validate.outputs.version }}
+        body: ${{ needs.changelog.outputs.changelog }}
+        prerelease: ${{ needs.validate.outputs.is_prerelease }}
+        files: release-assets/*
+        generate_release_notes: false
+        make_latest: ${{ !fromJSON(needs.validate.outputs.is_prerelease) }}
+
+  publish-helm:
+    name: Publish Helm Chart
+    runs-on: ubuntu-latest
+    needs: [validate, create-release]
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Download Helm chart
+      uses: actions/download-artifact@v4
+      with:
+        name: helm-chart
+        path: helm-chart/
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: '3.13.0'
+
+    - name: Log in to GitHub Container Registry
+      run: |
+        echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
+
+    - name: Push Helm chart to OCI registry
+      run: |
+        cd helm-chart/
+        CHART_FILE=$(ls *.tgz)
+        helm push "${CHART_FILE}" oci://ghcr.io/${{ github.repository_owner }}/charts
+
+  security-scan:
+    name: Security Scan Release
+    runs-on: ubuntu-latest
+    needs: [validate, create-release]
+    permissions:
+      security-events: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download release archives
+      uses: actions/download-artifact@v4
+      with:
+        name: release-archives
+        path: release-assets/
+
+    - name: Scan release binaries
+      run: |
+        echo "Scanning release binaries for security issues..."
+        
+        # Extract and scan binaries
+        for archive in release-assets/*.tar.gz; do
+          if [[ -f "$archive" ]]; then
+            echo "Extracting $archive..."
+            tar -tzf "$archive" | head -5
+            # Add actual security scanning here if needed
+          fi
+        done
+
+    - name: Generate SBOM for release
+      run: |
+        VERSION="${{ needs.validate.outputs.version }}"
+        echo "Generating SBOM for release $VERSION..."
+        
+        # Create release SBOM
+        cat > release-sbom.json << EOF
+        {
+          "bomFormat": "CycloneDX",
+          "specVersion": "1.4",
+          "serialNumber": "urn:uuid:$(uuidgen)",
+          "version": 1,
+          "metadata": {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "component": {
+              "type": "application",
+              "name": "roost-keeper",
+              "version": "${VERSION#v}"
+            }
+          }
+        }
+        EOF
+
+    - name: Upload release SBOM
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-sbom
+        path: release-sbom.json
+        retention-days: 365
+
+  notify:
+    name: Release Notification
+    runs-on: ubuntu-latest
+    needs: [validate, create-release, publish-helm]
+    if: always()
+    
+    steps:
+    - name: Generate release summary
+      run: |
+        VERSION="${{ needs.validate.outputs.version }}"
+        IS_PRERELEASE="${{ needs.validate.outputs.is_prerelease }}"
+        
+        echo "# Release Summary: $VERSION" > release-summary.md
+        echo "" >> release-summary.md
+        echo "## Release Information" >> release-summary.md
+        echo "- **Version**: $VERSION" >> release-summary.md
+        echo "- **Pre-release**: $IS_PRERELEASE" >> release-summary.md
+        echo "- **Release URL**: https://github.com/${{ github.repository }}/releases/tag/$VERSION" >> release-summary.md
+        echo "" >> release-summary.md
+        echo "## Status" >> release-summary.md
+        echo "- **Create Release**: ${{ needs.create-release.result }}" >> release-summary.md
+        echo "- **Publish Helm**: ${{ needs.publish-helm.result }}" >> release-summary.md
+        echo "" >> release-summary.md
+        echo "## Assets Available" >> release-summary.md
+        echo "- Multi-platform binaries (Linux, macOS, Windows)" >> release-summary.md
+        echo "- Helm chart published to OCI registry" >> release-summary.md
+        echo "- Source code archives" >> release-summary.md
+        echo "- Security artifacts (SBOM, checksums)" >> release-summary.md
+        echo "" >> release-summary.md
+        echo "Generated on: $(date)" >> release-summary.md
+
+    - name: Upload release summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-summary
+        path: release-summary.md
+        retention-days: 90

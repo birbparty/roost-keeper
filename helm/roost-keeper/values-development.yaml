@@ -1,0 +1,109 @@
+# Development environment values for roost-keeper
+# Override default values for development deployment
+
+# Development-specific image configuration
+image:
+  tag: "latest"
+  pullPolicy: Always
+
+# Reduced replicas for development
+controller:
+  replicas: 1
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  
+  # Development-friendly health checks
+  healthCheck:
+    livenessProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    readinessProbe:
+      initialDelaySeconds: 3
+      periodSeconds: 5
+    startupProbe:
+      initialDelaySeconds: 3
+      periodSeconds: 5
+      failureThreshold: 15
+
+# Disable monitoring for development
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+
+# Relaxed security for development
+security:
+  podSecurityStandards:
+    enforce: baseline
+    audit: baseline
+    warn: baseline
+  networkPolicies:
+    enabled: false
+
+# Enhanced observability for debugging
+observability:
+  logging:
+    level: debug
+    development: true
+    format: console
+  tracing:
+    enabled: false
+    samplingRate: 1.0
+
+# Disable HA features for development
+highAvailability:
+  enabled: false
+  podDisruptionBudget:
+    enabled: false
+  topologySpreadConstraints:
+    enabled: false
+
+# Simplified webhook configuration
+webhook:
+  enabled: true
+  certManager:
+    enabled: false
+  failurePolicy: Ignore
+  timeoutSeconds: 5
+
+# Disable performance optimizations for simplicity
+performance:
+  enabled: false
+  maxConcurrentReconciles: 5
+  workerPool:
+    size: 10
+
+# Development-friendly storage
+storage:
+  enabled: false
+
+# Simplified RBAC
+rbac:
+  create: true
+
+# Development-specific tolerations (none needed)
+controller:
+  tolerations: []
+  nodeSelector: {}
+  affinity: {}
+
+# Development debug settings
+debug:
+  enabled: true
+  verbose: true
+
+# Development-specific extra labels
+extra:
+  labels:
+    environment: development
+    purpose: development-testing
+  annotations:
+    roost-keeper.io/dev-mode: "true"
+
+# Override environment-specific settings
+environment: development

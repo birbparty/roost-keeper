@@ -1,0 +1,41 @@
+# PodDisruptionBudget for High Availability Protection
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: roost-keeper-controller-pdb
+  namespace: roost-keeper-system
+  labels:
+    app.kubernetes.io/name: roost-keeper
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/part-of: roost-keeper
+    app.kubernetes.io/managed-by: kustomize
+    control-plane: controller-manager
+    app: roost-keeper
+spec:
+  # Ensure at least 2 replicas remain available during disruptions
+  minAvailable: 2
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app: roost-keeper
+---
+# Alternative PDB using maxUnavailable (uncomment if preferred)
+# apiVersion: policy/v1
+# kind: PodDisruptionBudget
+# metadata:
+#   name: roost-keeper-controller-pdb-alt
+#   namespace: roost-keeper-system
+#   labels:
+#     app.kubernetes.io/name: roost-keeper
+#     app.kubernetes.io/component: controller-manager
+#     app.kubernetes.io/part-of: roost-keeper
+#     app.kubernetes.io/managed-by: kustomize
+#     control-plane: controller-manager
+#     app: roost-keeper
+# spec:
+#   # Allow at most 1 replica to be unavailable during disruptions
+#   maxUnavailable: 1
+#   selector:
+#     matchLabels:
+#       control-plane: controller-manager
+#       app: roost-keeper

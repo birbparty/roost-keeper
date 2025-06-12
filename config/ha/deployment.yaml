@@ -1,0 +1,328 @@
+# High Availability Deployment Configuration for Roost-Keeper Controller
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: roost-keeper-system
+  labels:
+    app.kubernetes.io/name: roost-keeper
+    app.kubernetes.io/component: system
+    app.kubernetes.io/part-of: roost-keeper
+    app.kubernetes.io/managed-by: kustomize
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roost-keeper-controller-manager
+  namespace: roost-keeper-system
+  labels:
+    app.kubernetes.io/name: roost-keeper
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/part-of: roost-keeper
+    app.kubernetes.io/managed-by: kustomize
+    control-plane: controller-manager
+    app: roost-keeper
+spec:
+  # High Availability: 3 replicas for leader election and fault tolerance
+  replicas: 3
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app: roost-keeper
+  # Enhanced Rolling Update Strategy for Zero-Downtime Deployments
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1  # Keep at least 2 replicas running
+      maxSurge: 1        # Allow 1 extra replica during updates
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        # Force restart on config changes
+        checksum/config: "ha-deployment-v1.0"
+      labels:
+        control-plane: controller-manager
+        app.kubernetes.io/name: roost-keeper
+        app.kubernetes.io/component: controller-manager
+        app.kubernetes.io/part-of: roost-keeper
+        app.kubernetes.io/version: "v0.1.0"
+        app: roost-keeper
+    spec:
+      # Security Context for Enhanced Security
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: roost-keeper-controller-manager
+      terminationGracePeriodSeconds: 30
+      
+      # Pod Anti-Affinity for High Availability across nodes and zones
+      affinity:
+        podAntiAffinity:
+          # Prefer to schedule on different nodes
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - roost-keeper
+                - key: control-plane
+                  operator: In
+                  values:
+                  - controller-manager
+              topologyKey: kubernetes.io/hostname
+          # Prefer to schedule across different availability zones
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - roost-keeper
+              topologyKey: topology.kubernetes.io/zone
+          # Require distribution across different nodes for critical deployments
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - roost-keeper
+              - key: control-plane
+                operator: In
+                values:
+                - controller-manager
+            topologyKey: kubernetes.io/hostname
+      
+      # Tolerations for control plane nodes
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      
+      # Node Selection for optimal placement
+      nodeSelector:
+        kubernetes.io/os: linux
+      
+      containers:
+      - name: manager
+        image: roost-keeper:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /manager
+        args:
+        # High Availability Leader Election Configuration
+        - --leader-elect=true
+        - --leader-election-id=roost-keeper-controller
+        - --leader-election-namespace=roost-keeper-system
+        - --leader-election-lease-duration=15s
+        - --leader-election-renew-deadline=10s
+        - --leader-election-retry-period=2s
+        # Enhanced Metrics and Health Configuration
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=:8080
+        - --metrics-secure=true
+        - --enable-http2=false
+        # Performance Optimization for HA
+        - --max-concurrent-reconciles=10
+        - --cache-sync-period=10m
+        # Webhook Configuration
+        - --webhook-port=9443
+        - --webhook-cert-dir=/tmp/k8s-webhook-server/serving-certs
+        # Logging Configuration
+        - --zap-log-level=info
+        - --zap-development=false
+        
+        # Enhanced Security Context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - "ALL"
+          seccompProfile:
+            type: RuntimeDefault
+        
+        # Comprehensive Health Checks for HA
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        startupProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+        
+        # Resource Allocation for HA Workloads
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+            ephemeral-storage: 100Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+            ephemeral-storage: 1Gi
+        
+        # Network Ports
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        - containerPort: 8081
+          name: health-probe
+          protocol: TCP
+        
+        # Volume Mounts for Certificates and Temporary Storage
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: cert
+          readOnly: true
+        - mountPath: /tmp
+          name: tmp
+        - mountPath: /observability
+          name: observability-data
+        
+        # Environment Variables for HA Operation
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        # OpenTelemetry Configuration
+        - name: OTEL_SERVICE_NAME
+          value: "roost-keeper-manager"
+        - name: OTEL_SERVICE_VERSION
+          value: "v0.1.0"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=roost-keeper,service.version=v0.1.0,service.namespace=roost.birb.party,k8s.namespace.name=$(POD_NAMESPACE),k8s.pod.name=$(POD_NAME),k8s.node.name=$(NODE_NAME)"
+        # HA-specific Configuration
+        - name: HA_ENABLED
+          value: "true"
+        - name: HA_REPLICA_COUNT
+          value: "3"
+      
+      # Volumes for Certificates and Temporary Storage
+      volumes:
+      - name: cert
+        secret:
+          defaultMode: 420
+          secretName: webhook-server-certs
+          optional: true
+      - name: tmp
+        emptyDir:
+          sizeLimit: 100Mi
+      - name: observability-data
+        emptyDir:
+          sizeLimit: 1Gi
+---
+# Enhanced Service for HA Load Balancing
+apiVersion: v1
+kind: Service
+metadata:
+  name: roost-keeper-controller-manager-metrics-service
+  namespace: roost-keeper-system
+  labels:
+    app.kubernetes.io/name: roost-keeper
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/part-of: roost-keeper
+    app.kubernetes.io/managed-by: kustomize
+    control-plane: controller-manager
+    app: roost-keeper
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: ClusterIP
+  sessionAffinity: None  # Allow load balancing across all replicas
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8080
+  - name: health
+    port: 8081
+    protocol: TCP
+    targetPort: 8081
+  selector:
+    control-plane: controller-manager
+    app: roost-keeper
+---
+# Enhanced Webhook Service for HA
+apiVersion: v1
+kind: Service
+metadata:
+  name: roost-keeper-webhook-service
+  namespace: roost-keeper-system
+  labels:
+    app.kubernetes.io/name: roost-keeper
+    app.kubernetes.io/component: webhook
+    app.kubernetes.io/part-of: roost-keeper
+    app.kubernetes.io/managed-by: kustomize
+    app: roost-keeper
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: ClusterIP
+  sessionAffinity: None  # Allow load balancing across webhook replicas
+  ports:
+  - name: webhook
+    port: 443
+    protocol: TCP
+    targetPort: 9443
+  selector:
+    control-plane: controller-manager
+    app: roost-keeper

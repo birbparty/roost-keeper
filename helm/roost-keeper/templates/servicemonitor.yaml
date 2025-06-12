@@ -1,0 +1,53 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "roost-keeper.serviceMonitorName" . }}
+  namespace: {{ include "roost-keeper.namespace" . }}
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "roost-keeper.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: metrics
+  endpoints:
+  - port: https
+    interval: {{ .Values.monitoring.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+    path: {{ .Values.observability.metrics.path }}
+    scheme: https
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tlsConfig:
+      serverName: {{ include "roost-keeper.metricsServiceName" . }}.{{ include "roost-keeper.namespace" . }}.svc
+      ca:
+        secret:
+          name: {{ include "roost-keeper.serviceAccountName" . }}-token
+          key: ca.crt
+      cert:
+        secret:
+          name: {{ include "roost-keeper.serviceAccountName" . }}-token
+          key: tls.crt
+      keySecret:
+        name: {{ include "roost-keeper.serviceAccountName" . }}-token
+        key: tls.key
+    {{- with .Values.monitoring.serviceMonitor.metricRelabelings }}
+    metricRelabelings:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.monitoring.serviceMonitor.relabelings }}
+    relabelings:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  namespaceSelector:
+    matchNames:
+    - {{ include "roost-keeper.namespace" . }}
+{{- end }}

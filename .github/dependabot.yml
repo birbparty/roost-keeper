@@ -1,0 +1,97 @@
+version: 2
+updates:
+  # Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "birbparty/roost-keeper-maintainers"
+    assignees:
+      - "birbparty/roost-keeper-maintainers"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "go"
+    groups:
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+        exclude-patterns:
+          - "k8s.io/client-go"
+      controller-runtime:
+        patterns:
+          - "sigs.k8s.io/controller-runtime*"
+      observability:
+        patterns:
+          - "go.opentelemetry.io/*"
+          - "github.com/prometheus/*"
+      security:
+        patterns:
+          - "golang.org/x/crypto*"
+          - "golang.org/x/net*"
+          - "golang.org/x/sys*"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "birbparty/roost-keeper-maintainers"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "birbparty/roost-keeper-maintainers"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # Helm charts (if any dependencies in Chart.yaml)
+  - package-ecosystem: "bundler"
+    directory: "/helm/roost-keeper"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "birbparty/roost-keeper-maintainers"
+    commit-message:
+      prefix: "helm"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "helm"
+    ignore:
+      # Ignore patch updates for stable dependencies
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]

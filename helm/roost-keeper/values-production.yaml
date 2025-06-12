@@ -1,0 +1,228 @@
+# Production environment values for roost-keeper
+# Override default values for production deployment
+
+# Production-specific image configuration
+image:
+  tag: "v0.1.0"  # Use specific version for production
+  pullPolicy: IfNotPresent
+
+# Production replicas for high availability
+controller:
+  replicas: 3
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+      ephemeral-storage: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+      ephemeral-storage: 100Mi
+  
+  # Production health checks
+  healthCheck:
+    enabled: true
+    livenessProbe:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readinessProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    startupProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+
+# Enable comprehensive monitoring for production
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+  prometheus:
+    enabled: true
+    namespace: monitoring
+  grafana:
+    enabled: true
+    namespace: monitoring
+    dashboards:
+      enabled: true
+  alertManager:
+    enabled: true
+    rules:
+      enabled: true
+
+# Strict security for production
+security:
+  podSecurityStandards:
+    enforce: restricted
+    audit: restricted
+    warn: restricted
+  networkPolicies:
+    enabled: true
+    denyAll: true
+    allowRoostKeeperSystem: true
+    allowMonitoring: true
+
+# Production observability
+observability:
+  enabled: true
+  otel:
+    enabled: true
+    serviceName: "roost-keeper"
+    serviceVersion: "v0.1.0"
+    samplingRate: 0.1
+  logging:
+    level: info
+    format: json
+    development: false
+  tracing:
+    enabled: true
+    samplingRate: 0.1
+
+# Full HA configuration for production
+highAvailability:
+  enabled: true
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  topologySpreadConstraints:
+    enabled: true
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+
+# Production webhook configuration
+webhook:
+  enabled: true
+  certManager:
+    enabled: true
+    issuer:
+      kind: ClusterIssuer
+      name: production-cluster-issuer
+    duration: 2160h # 90 days
+    renewBefore: 360h # 15 days
+  failurePolicy: Fail
+  timeoutSeconds: 10
+
+# Enable performance optimizations for production
+performance:
+  enabled: true
+  maxConcurrentReconciles: 10
+  cacheSyncPeriod: "10m"
+  workerPool:
+    size: 50
+    queueDepth: 1000
+  cache:
+    size: 1000
+    ttl: "5m"
+  resourceCache:
+    enabled: true
+    size: 500
+    ttl: "2m"
+
+# Production storage configuration
+storage:
+  enabled: false
+
+# Production RBAC
+rbac:
+  create: true
+
+# Production node placement
+controller:
+  nodeSelector:
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/worker: "true"
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - roost-keeper
+            - key: app.kubernetes.io/component
+              operator: In
+              values:
+              - controller
+          topologyKey: kubernetes.io/hostname
+      - weight: 50
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - roost-keeper
+          topologyKey: topology.kubernetes.io/zone
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - roost-keeper
+          - key: app.kubernetes.io/component
+            operator: In
+            values:
+            - controller
+        topologyKey: kubernetes.io/hostname
+
+# Production external dependencies
+certManager:
+  enabled: true
+  namespace: cert-manager
+
+# Production upgrade configuration
+upgrade:
+  strategy: RollingUpdate
+  preUpgrade:
+    enabled: true
+    backup: true
+    validate: true
+    timeout: "5m"
+  postUpgrade:
+    enabled: true
+    verify: true
+    test: true
+    timeout: "5m"
+
+# Production testing
+tests:
+  enabled: true
+  timeout: "10m"
+
+# Production debug settings (disabled)
+debug:
+  enabled: false
+  verbose: false
+
+# Production-specific extra labels
+extra:
+  labels:
+    environment: production
+    criticality: high
+    backup: "true"
+  annotations:
+    roost-keeper.io/production: "true"
+    roost-keeper.io/backup-policy: "daily"
+
+# Override environment-specific settings
+environment: production

@@ -1,0 +1,300 @@
+# Slack Notification Configuration for Roost-Keeper Alerts
+# Context-rich notifications with direct links to dashboards and runbooks
+
+# Alertmanager configuration for Slack integration
+global:
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  slack_api_url_file: '/etc/alertmanager/slack_url'
+
+route:
+  group_by: ['alertname', 'severity', 'slo']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 4h
+  receiver: 'web.hook'
+  routes:
+    # Critical alerts go to on-call channel immediately
+    - match:
+        severity: critical
+      receiver: 'slack-oncall-critical'
+      group_wait: 0s
+      repeat_interval: 30m
+      
+    # SLO breaches get special handling
+    - match_re:
+        alertname: .*SLO.*
+      receiver: 'slack-slo-alerts'
+      group_interval: 5m
+      repeat_interval: 2h
+      
+    # Warning alerts to general platform channel
+    - match:
+        severity: warning
+      receiver: 'slack-platform-warnings'
+      repeat_interval: 6h
+
+receivers:
+  # Critical On-Call Alerts
+  - name: 'slack-oncall-critical'
+    slack_configs:
+      - channel: '#roost-keeper-oncall'
+        color: 'danger'
+        username: 'roost-keeper-alertmanager'
+        icon_emoji: ':rotating_light:'
+        title: '🚨 CRITICAL ALERT: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        title_link: '{{ range .Alerts }}{{ .Annotations.dashboard_url }}{{ end }}'
+        text: |
+          {{ range .Alerts }}
+          **Service**: {{ .Labels.service }}
+          **Severity**: {{ .Labels.severity | upper }}
+          **Team**: {{ .Labels.team }}
+          
+          {{ .Annotations.description }}
+          
+          **Quick Actions:**
+          🔍 [Debug Dashboard]({{ .Annotations.debug_url }})
+          📚 [Runbook]({{ .Annotations.runbook_url }})
+          📊 [SLI/SLO Dashboard]({{ .Annotations.dashboard_url }})
+          
+          **Alert Details:**
+          - Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+          - Labels: {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+          {{ end }}
+        actions:
+          - type: button
+            text: 'Acknowledge'
+            url: '{{ range .Alerts }}{{ .GeneratorURL }}{{ end }}'
+          - type: button
+            text: 'Debug Dashboard'
+            url: '{{ range .Alerts }}{{ .Annotations.debug_url }}{{ end }}'
+            style: 'primary'
+          - type: button
+            text: 'Runbook'
+            url: '{{ range .Alerts }}{{ .Annotations.runbook_url }}{{ end }}'
+
+  # SLO Specific Alerts
+  - name: 'slack-slo-alerts'
+    slack_configs:
+      - channel: '#roost-keeper-slo'
+        color: 'warning'
+        username: 'roost-keeper-slo'
+        icon_emoji: ':chart_with_downwards_trend:'
+        title: '📉 SLO Alert: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        title_link: '{{ range .Alerts }}{{ .Annotations.dashboard_url }}{{ end }}'
+        text: |
+          {{ range .Alerts }}
+          **SLO Type**: {{ .Labels.slo | title }}
+          **Severity**: {{ .Labels.severity | upper }}
+          **Service**: {{ .Labels.service }}
+          
+          {{ .Annotations.description }}
+          
+          **SLO Dashboards:**
+          📊 [SLI/SLO Overview]({{ .Annotations.dashboard_url }})
+          🔍 [Debug Dashboard]({{ .Annotations.debug_url }})
+          📚 [Runbook]({{ .Annotations.runbook_url }})
+          
+          **Error Budget Status:**
+          This alert indicates error budget consumption above normal rates.
+          Review the SLO dashboard for current budget status and burn rate trends.
+          {{ end }}
+        actions:
+          - type: button
+            text: 'SLO Dashboard'
+            url: '{{ range .Alerts }}{{ .Annotations.dashboard_url }}{{ end }}'
+            style: 'primary'
+          - type: button
+            text: 'Debug'
+            url: '{{ range .Alerts }}{{ .Annotations.debug_url }}{{ end }}'
+
+  # Platform Warning Alerts
+  - name: 'slack-platform-warnings'
+    slack_configs:
+      - channel: '#roost-keeper-platform'
+        color: 'warning'
+        username: 'roost-keeper-alertmanager'
+        icon_emoji: ':warning:'
+        title: '⚠️ Platform Alert: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        title_link: '{{ range .Alerts }}{{ .Annotations.dashboard_url }}{{ end }}'
+        text: |
+          {{ range .Alerts }}
+          **Service**: {{ .Labels.service }}
+          **Severity**: {{ .Labels.severity | upper }}
+          **Component**: {{ .Labels.alertname }}
+          
+          {{ .Annotations.description }}
+          
+          **Monitoring Links:**
+          📊 [Operational Dashboard](https://grafana.roost-keeper.io/d/roost-keeper-operational)
+          🔍 [Debug Dashboard]({{ .Annotations.debug_url }})
+          📚 [Runbook]({{ .Annotations.runbook_url }})
+          
+          **Next Steps:**
+          Review the operational dashboard for current system status and trends.
+          Check the runbook for specific troubleshooting steps.
+          {{ end }}
+
+  # Default webhook (fallback)
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://localhost:5001/'
+
+# Inhibition rules to prevent alert spam
+inhibit_rules:
+  # Inhibit warning SLO alerts if critical ones are firing
+  - source_match:
+      severity: 'critical'
+      slo: '.*'
+    target_match:
+      severity: 'warning'
+      slo: '.*'
+    equal: ['slo', 'service']
+    
+  # Inhibit high queue depth alerts if operator is down
+  - source_match:
+      alertname: 'RoostKeeperOperatorDown'
+    target_match:
+      alertname: 'RoostKeeperHighQueueDepth'
+    equal: ['service']
+    
+  # Inhibit resource alerts if operator is down
+  - source_match:
+      alertname: 'RoostKeeperOperatorDown'
+    target_match_re:
+      alertname: 'RoostKeeperHigh.*Usage'
+    equal: ['service']
+
+# Templates for reusable message formatting
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+---
+# Slack Message Templates
+# File: /etc/alertmanager/templates/slack.tmpl
+
+{{ define "slack.roost.title" }}
+{{ range .Alerts }}
+{{ if eq .Labels.severity "critical" }}🚨 CRITICAL{{ else if eq .Labels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .Annotations.summary }}
+{{ end }}
+{{ end }}
+
+{{ define "slack.roost.text" }}
+{{ range .Alerts }}
+**Service**: {{ .Labels.service | toUpper }}
+**Severity**: {{ .Labels.severity | upper }}
+**Component**: {{ .Labels.alertname }}
+{{ if .Labels.slo }}**SLO**: {{ .Labels.slo | title }}{{ end }}
+
+{{ .Annotations.description }}
+
+**Quick Links:**
+{{ if .Annotations.dashboard_url }}📊 [Dashboard]({{ .Annotations.dashboard_url }}){{ end }}
+{{ if .Annotations.debug_url }}🔍 [Debug]({{ .Annotations.debug_url }}){{ end }}
+{{ if .Annotations.runbook_url }}📚 [Runbook]({{ .Annotations.runbook_url }}){{ end }}
+
+**Alert Details:**
+- **Started**: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+- **Generator**: {{ .GeneratorURL }}
+{{ if .Labels.correlation_id }}
+- **Correlation ID**: `{{ .Labels.correlation_id }}`
+{{ end }}
+
+**Labels**: {{ range .Labels.SortedPairs }}`{{ .Name }}={{ .Value }}` {{ end }}
+{{ end }}
+{{ end }}
+
+{{ define "slack.roost.color" }}
+{{ range .Alerts }}
+{{ if eq .Labels.severity "critical" }}danger{{ else if eq .Labels.severity "warning" }}warning{{ else }}good{{ end }}
+{{ end }}
+{{ end }}
+
+---
+# Slack Webhook Configuration Script
+# File: scripts/setup-slack-webhook.sh
+
+#!/bin/bash
+set -euo pipefail
+
+# Setup Slack webhook for Roost-Keeper alerts
+# Usage: ./setup-slack-webhook.sh <slack-webhook-url>
+
+WEBHOOK_URL="${1:-}"
+NAMESPACE="${ROOST_KEEPER_NAMESPACE:-roost-keeper-system}"
+
+if [[ -z "$WEBHOOK_URL" ]]; then
+    echo "❌ Error: Slack webhook URL required"
+    echo "Usage: $0 <slack-webhook-url>"
+    echo ""
+    echo "📝 To get a webhook URL:"
+    echo "1. Go to https://api.slack.com/apps"
+    echo "2. Create a new app or select existing"
+    echo "3. Go to 'Incoming Webhooks'"
+    echo "4. Enable incoming webhooks"
+    echo "5. Create a webhook for your channel"
+    exit 1
+fi
+
+echo "🔧 Setting up Slack notifications for Roost-Keeper..."
+
+# Create secret for webhook URL
+kubectl create secret generic roost-keeper-slack-webhook \
+    --from-literal=url="$WEBHOOK_URL" \
+    --namespace="$NAMESPACE" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+echo "✅ Slack webhook secret created in namespace: $NAMESPACE"
+
+# Verify secret
+if kubectl get secret roost-keeper-slack-webhook -n "$NAMESPACE" >/dev/null 2>&1; then
+    echo "✅ Secret verification successful"
+    
+    # Test webhook (optional)
+    read -p "🧪 Test webhook with sample alert? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        curl -X POST "$WEBHOOK_URL" \
+            -H 'Content-type: application/json' \
+            --data '{
+                "text": "🧪 Test Alert from Roost-Keeper",
+                "attachments": [
+                    {
+                        "color": "good",
+                        "title": "✅ Slack Integration Test",
+                        "text": "Roost-Keeper alerting is now configured and working!",
+                        "fields": [
+                            {
+                                "title": "Service",
+                                "value": "roost-keeper",
+                                "short": true
+                            },
+                            {
+                                "title": "Status",
+                                "value": "✅ Operational",
+                                "short": true
+                            }
+                        ],
+                        "footer": "Roost-Keeper Alertmanager",
+                        "ts": '$(date +%s)'
+                    }
+                ]
+            }'
+        echo "✅ Test alert sent to Slack"
+    fi
+else
+    echo "❌ Failed to create secret"
+    exit 1
+fi
+
+echo ""
+echo "🎉 Slack integration setup complete!"
+echo ""
+echo "📋 Next steps:"
+echo "1. Configure Alertmanager to use the webhook secret"
+echo "2. Deploy the alerting rules to your cluster" 
+echo "3. Verify alerts are flowing to Slack channels"
+echo ""
+echo "📊 Dashboard URLs:"
+echo "- Operational: https://grafana.roost-keeper.io/d/roost-keeper-operational"
+echo "- SLI/SLO: https://grafana.roost-keeper.io/d/roost-keeper-sli-slo"
+echo "- Debug: https://grafana.roost-keeper.io/d/roost-keeper-debug"

@@ -1,0 +1,27 @@
+{{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "roost-keeper.webhookCertificateName" . }}
+  namespace: {{ include "roost-keeper.namespace" . }}
+  labels:
+    {{- include "roost-keeper.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+  {{- with .Values.extra.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  secretName: {{ include "roost-keeper.webhookSecretName" . }}
+  duration: {{ .Values.webhook.certManager.duration }}
+  renewBefore: {{ .Values.webhook.certManager.renewBefore }}
+  issuerRef:
+    kind: {{ .Values.webhook.certManager.issuer.kind }}
+    name: {{ .Values.webhook.certManager.issuer.name }}
+  commonName: {{ include "roost-keeper.webhookServiceName" . }}.{{ include "roost-keeper.namespace" . }}.svc
+  dnsNames:
+  - {{ include "roost-keeper.webhookServiceName" . }}
+  - {{ include "roost-keeper.webhookServiceName" . }}.{{ include "roost-keeper.namespace" . }}
+  - {{ include "roost-keeper.webhookServiceName" . }}.{{ include "roost-keeper.namespace" . }}.svc
+  - {{ include "roost-keeper.webhookServiceName" . }}.{{ include "roost-keeper.namespace" . }}.svc.cluster.local
+{{- end }}

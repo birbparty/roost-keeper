@@ -1,0 +1,289 @@
+# Prometheus Alerting Rules for Roost-Keeper
+# Multi-window, multi-burn-rate SLO alerting with Slack integration
+
+groups:
+  # SLO Breach Alerting
+  - name: roost-keeper-slo-alerts
+    interval: 30s
+    rules:
+      # Availability SLO Alerts
+      - alert: RoostAvailabilitySLOCriticalBreach
+        expr: |
+          (
+            (1 - (sum(rate(roost_keeper_health_check_success_total[1h])) / sum(rate(roost_keeper_health_check_total[1h])))) 
+            / (1 - 0.995) * 720
+          ) > 14.4
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "🚨 CRITICAL: Roost Availability SLO Breach"
+          description: |
+            Roost availability error budget is burning at {{ $value | humanize }}x normal rate.
+            At this rate, the monthly error budget will be exhausted in {{ printf "%.1f" (720 / $value) }} hours.
+            
+            **Current Status:**
+            - Availability: {{ with query "sum(rate(roost_keeper_health_check_success_total[5m])) / sum(rate(roost_keeper_health_check_total[5m]))" }}{{ . | first | value | humanizePercentage }}{{ end }}
+            - Target: 99.5%
+            - Error Budget: {{ with query "1 - ((0.995 - (sum(rate(roost_keeper_health_check_success_total[30d])) / sum(rate(roost_keeper_health_check_total[30d])))) / (1 - 0.995))" }}{{ . | first | value | humanizePercentage }}{{ end }} remaining
+          runbook_url: "https://runbooks.roost-keeper.io/availability-slo-breach"
+          dashboard_url: "https://grafana.roost-keeper.io/d/roost-keeper-sli-slo"
+          debug_url: "https://grafana.roost-keeper.io/d/roost-keeper-debug"
+
+      - alert: RoostAvailabilitySLOWarningBreach  
+        expr: |
+          (
+            (1 - (sum(rate(roost_keeper_health_check_success_total[6h])) / sum(rate(roost_keeper_health_check_total[6h])))) 
+            / (1 - 0.995) * 120
+          ) > 6
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "⚠️ WARNING: Roost Availability SLO Degrading"
+          description: |
+            Roost availability is consuming error budget faster than expected.
+            Current burn rate: {{ $value | humanize }}x normal over 6 hours.
+            
+            **Current Status:**
+            - Availability: {{ with query "sum(rate(roost_keeper_health_check_success_total[5m])) / sum(rate(roost_keeper_health_check_total[5m]))" }}{{ . | first | value | humanizePercentage }}{{ end }}
+            - Error Budget: {{ with query "1 - ((0.995 - (sum(rate(roost_keeper_health_check_success_total[30d])) / sum(rate(roost_keeper_health_check_total[30d])))) / (1 - 0.995))" }}{{ . | first | value | humanizePercentage }}{{ end }} remaining
+          runbook_url: "https://runbooks.roost-keeper.io/availability-degradation"
+
+      # Creation Latency SLO Alerts
+      - alert: RoostCreationLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(roost_keeper_helm_install_duration_seconds_bucket[5m])) by (le)
+          ) > 60
+        for: 3m
+        labels:
+          severity: warning
+          slo: creation_latency
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "🐌 Roost Creation Latency SLO Breach"
+          description: |
+            P95 roost creation latency is {{ $value }}s, exceeding 60s alert threshold.
+            
+            **Current Metrics:**
+            - P95 Latency: {{ $value }}s (target: 30s, alert: 60s)
+            - P50 Latency: {{ with query "histogram_quantile(0.50, sum(rate(roost_keeper_helm_install_duration_seconds_bucket[5m])) by (le))" }}{{ . | first | value }}s{{ end }}
+            
+            **Likely Causes:**
+            - High resource contention
+            - Slow Helm operations
+            - Kubernetes API server latency
+          runbook_url: "https://runbooks.roost-keeper.io/creation-latency"
+          dashboard_url: "https://grafana.roost-keeper.io/d/roost-keeper-operational"
+
+      # Health Check Latency SLO Alerts  
+      - alert: RoostHealthCheckLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(roost_keeper_health_check_duration_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 1m
+        labels:
+          severity: warning
+          slo: health_check_latency
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "🏥 Health Check Latency SLO Breach"
+          description: |
+            P95 health check latency is {{ $value }}s, exceeding 5s alert threshold.
+            
+            **Current Metrics:**
+            - P95 Latency: {{ $value }}s (target: 1s, alert: 5s)
+            - Health Check Success Rate: {{ with query "sum(rate(roost_keeper_health_check_success_total[5m])) / sum(rate(roost_keeper_health_check_total[5m]))" }}{{ . | first | value | humanizePercentage }}{{ end }}
+          runbook_url: "https://runbooks.roost-keeper.io/health-check-latency"
+
+      # Error Rate SLO Alerts
+      - alert: RoostControllerErrorRateSLOCriticalBreach
+        expr: |
+          (
+            sum(rate(roost_keeper_reconcile_errors_total[10m])) / 
+            sum(rate(roost_keeper_reconcile_total[10m]))
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          slo: error_rate
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "💥 CRITICAL: Controller Error Rate SLO Breach"
+          description: |
+            Controller error rate is {{ $value | humanizePercentage }}, exceeding 5% critical threshold.
+            
+            **Current Metrics:**
+            - Error Rate: {{ $value | humanizePercentage }} (target: 1%, critical: 5%)
+            - Total Operations/min: {{ with query "rate(roost_keeper_reconcile_total[1m]) * 60" }}{{ . | first | value | humanize }}{{ end }}
+            - Failed Operations/min: {{ with query "rate(roost_keeper_reconcile_errors_total[1m]) * 60" }}{{ . | first | value | humanize }}{{ end }}
+            
+            **Immediate Actions Required:**
+            1. Check operator logs for error patterns
+            2. Verify Kubernetes API server health
+            3. Check resource constraints (CPU, memory)
+          runbook_url: "https://runbooks.roost-keeper.io/error-rate-spike"
+          dashboard_url: "https://grafana.roost-keeper.io/d/roost-keeper-debug"
+
+  # Operational Health Alerts
+  - name: roost-keeper-operational-alerts
+    interval: 30s
+    rules:
+      # Operator Down
+      - alert: RoostKeeperOperatorDown
+        expr: up{job="roost-keeper-operator"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "🔴 CRITICAL: Roost-Keeper Operator Down"
+          description: |
+            The Roost-Keeper operator is not responding to health checks.
+            
+            **Immediate Actions:**
+            1. Check operator pod status: `kubectl get pods -n roost-keeper-system`
+            2. Check operator logs: `kubectl logs -n roost-keeper-system -l app=roost-keeper`
+            3. Verify cluster connectivity and resources
+          runbook_url: "https://runbooks.roost-keeper.io/operator-down"
+
+      # High Queue Depth
+      - alert: RoostKeeperHighQueueDepth
+        expr: roost_keeper_reconcile_queue_length > 50
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "📈 High Reconcile Queue Depth"
+          description: |
+            Reconcile queue depth is {{ $value }}, indicating potential bottleneck.
+            
+            **Current Status:**
+            - Queue Length: {{ $value }}
+            - Processing Rate: {{ with query "rate(roost_keeper_reconcile_total[5m]) * 60" }}{{ . | first | value | humanize }}/min{{ end }}
+            
+            **Likely Causes:**
+            - High roost creation rate
+            - Slow reconciliation operations
+            - Resource constraints
+          runbook_url: "https://runbooks.roost-keeper.io/high-queue-depth"
+
+      # Resource Exhaustion
+      - alert: RoostKeeperHighMemoryUsage
+        expr: roost_keeper_memory_usage_bytes / (2 * 1024 * 1024 * 1024) > 0.9
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "💾 High Memory Usage"
+          description: |
+            Operator memory usage is {{ $value | humanizePercentage }} of 2GB limit.
+            Current usage: {{ with query "roost_keeper_memory_usage_bytes / (1024 * 1024 * 1024)" }}{{ . | first | value | humanize }}GB{{ end }}
+          runbook_url: "https://runbooks.roost-keeper.io/high-memory"
+
+      - alert: RoostKeeperHighCPUUsage
+        expr: roost_keeper_cpu_usage_ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "🔥 High CPU Usage"
+          description: |
+            Operator CPU usage is {{ $value | humanizePercentage }}.
+            This may impact reconciliation performance.
+          runbook_url: "https://runbooks.roost-keeper.io/high-cpu"
+
+  # Roost Health Alerts
+  - name: roost-keeper-roost-alerts
+    interval: 1m
+    rules:
+      # Multiple Failed Roosts
+      - alert: RoostKeeperMultipleFailedRoosts
+        expr: sum(roost_keeper_roosts_by_phase{phase="Failed"}) > 5
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "🚫 Multiple Failed Roosts Detected"
+          description: |
+            {{ $value }} roosts are currently in Failed state.
+            
+            **Failed Roosts by Namespace:**
+            {{ range query "roost_keeper_roosts_by_phase{phase=\"Failed\"}" }}
+            - {{ .Labels.namespace }}: {{ .Value }} failed roosts
+            {{ end }}
+            
+            **Recommended Actions:**
+            1. Check debug dashboard for failure patterns
+            2. Review operator logs for common errors
+            3. Validate cluster resources and health
+          dashboard_url: "https://grafana.roost-keeper.io/d/roost-keeper-debug"
+
+      # Stuck Operations
+      - alert: RoostKeeperStuckOperations
+        expr: |
+          (
+            sum(roost_keeper_roosts_by_phase{phase="Installing"}) +
+            sum(roost_keeper_roosts_by_phase{phase="Upgrading"})
+          ) > 10
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "⏳ Operations Stuck in Progress"
+          description: |
+            {{ $value }} roosts have been in Installing/Upgrading state for over 10 minutes.
+            
+            **Stuck Operations:**
+            - Installing: {{ with query "sum(roost_keeper_roosts_by_phase{phase=\"Installing\"})" }}{{ . | first | value }}{{ end }}
+            - Upgrading: {{ with query "sum(roost_keeper_roosts_by_phase{phase=\"Upgrading\"})" }}{{ . | first | value }}{{ end }}
+          runbook_url: "https://runbooks.roost-keeper.io/stuck-operations"
+
+  # External Dependencies
+  - name: roost-keeper-dependencies
+    interval: 1m
+    rules:
+      # Kubernetes API Issues
+      - alert: RoostKeeperKubernetesAPIErrors
+        expr: |
+          (
+            sum(rate(roost_keeper_kubernetes_api_errors_total[5m])) / 
+            sum(rate(roost_keeper_kubernetes_api_requests_total[5m]))
+          ) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+          service: roost-keeper
+        annotations:
+          summary: "🌐 Kubernetes API Error Rate High"
+          description: |
+            Kubernetes API error rate is {{ $value | humanizePercentage }}.
+            
+            **API Metrics:**
+            - Error Rate: {{ $value | humanizePercentage }}
+            - Request Rate: {{ with query "sum(rate(roost_keeper_kubernetes_api_requests_total[5m])) * 60" }}{{ . | first | value | humanize }}/min{{ end }}
+            - Average Latency: {{ with query "sum(rate(roost_keeper_kubernetes_api_latency_seconds_sum[5m])) / sum(rate(roost_keeper_kubernetes_api_latency_seconds_count[5m]))" }}{{ . | first | value }}s{{ end }}
+          runbook_url: "https://runbooks.roost-keeper.io/k8s-api-errors"

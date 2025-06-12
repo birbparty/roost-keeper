@@ -1,0 +1,66 @@
+# Basic NGINX Deployment with HTTP Health Check
+# Perfect for: Getting started, simple web applications, testing Roost-Keeper
+
+apiVersion: roost.birb.party/v1alpha1
+kind: ManagedRoost
+metadata:
+  name: basic-nginx
+  namespace: default
+  labels:
+    app: nginx
+    environment: demo
+    example: basic
+spec:
+  chart:
+    name: nginx
+    repository:
+      url: https://charts.bitnami.com/bitnami
+      type: http
+    version: "13.2.23"
+    values:
+      inline: |
+        replicaCount: 1
+        service:
+          type: ClusterIP
+          port: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+  
+  healthChecks:
+    - name: http-health
+      type: http
+      http:
+        url: "http://basic-nginx.default.svc.cluster.local"
+        method: GET
+        expectedCodes: [200]
+      interval: 30s
+      timeout: 10s
+      failureThreshold: 3
+  
+  teardownPolicy:
+    triggers:
+      - type: timeout
+        timeout: 1h  # Auto-cleanup after 1 hour
+    cleanup:
+      gracePeriod: 30s
+      force: true
+
+---
+# Usage:
+# kubectl apply -f nginx.yaml
+# 
+# Monitor:
+# kubectl get managedroost basic-nginx -w
+# kubectl describe managedroost basic-nginx
+#
+# Test:
+# kubectl port-forward svc/basic-nginx 8080:80
+# curl http://localhost:8080
+#
+# Cleanup:
+# kubectl delete managedroost basic-nginx

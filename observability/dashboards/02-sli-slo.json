@@ -1,0 +1,956 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "roost-keeper-sli-slo",
+    "title": "Roost-Keeper - SLI/SLO Tracking",
+    "description": "Service Level Indicator and Objective tracking with error budget burn rate analysis",
+    "tags": ["roost-keeper", "sli", "slo", "reliability"],
+    "timezone": "browser",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "hideControls": false,
+    "links": [
+      {
+        "icon": "external link",
+        "tags": ["operational"],
+        "title": "Operational Dashboard",
+        "tooltip": "Real-time operational overview",
+        "type": "dashboards",
+        "url": "/d/roost-keeper-operational"
+      },
+      {
+        "icon": "external link",
+        "tags": ["debug"],
+        "title": "Debug Dashboard", 
+        "tooltip": "Deep troubleshooting dashboard",
+        "type": "dashboards",
+        "url": "/d/roost-keeper-debug"
+      }
+    ],
+    "liveNow": false,
+    "panels": [
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "panels": [],
+        "title": "🎯 SLO Overview",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Current SLO status across all service level objectives",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "displayMode": "color-background",
+              "inspect": false
+            },
+            "mappings": [
+              {
+                "options": {
+                  "pattern": "^[0-9]\\.[0-9]+$",
+                  "result": {
+                    "color": "green",
+                    "index": 0
+                  }
+                },
+                "type": "regex"
+              }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.99
+                },
+                {
+                  "color": "green",
+                  "value": 0.995
+                }
+              ]
+            },
+            "unit": "percentunit"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 1
+        },
+        "id": 2,
+        "options": {
+          "showHeader": true,
+          "sortBy": [
+            {
+              "desc": false,
+              "displayName": "SLO"
+            }
+          ]
+        },
+        "pluginVersion": "9.0.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "sum(rate(roost_keeper_health_check_success_total[30d])) / sum(rate(roost_keeper_health_check_total[30d]))",
+            "format": "table",
+            "instant": true,
+            "interval": "",
+            "legendFormat": "Availability",
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "(sum(rate(roost_keeper_helm_install_duration_seconds_sum[7d])) / sum(rate(roost_keeper_helm_install_duration_seconds_count[7d]))) < 30",
+            "format": "table",
+            "instant": true,
+            "interval": "",
+            "legendFormat": "Creation Latency",
+            "refId": "B"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "(sum(rate(roost_keeper_health_check_duration_seconds_sum[7d])) / sum(rate(roost_keeper_health_check_duration_seconds_count[7d]))) < 1",
+            "format": "table",
+            "instant": true,
+            "interval": "",
+            "legendFormat": "Health Check Latency",
+            "refId": "C"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "sum(rate(roost_keeper_reconcile_errors_total[7d])) / sum(rate(roost_keeper_reconcile_total[7d]))",
+            "format": "table",
+            "instant": true,
+            "interval": "",
+            "legendFormat": "Error Rate",
+            "refId": "D"
+          }
+        ],
+        "title": "📊 Current SLO Status",
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "__name__": true
+              },
+              "indexByName": {},
+              "includeByName": {},
+              "renameByName": {
+                "Value #A": "Availability (99.5% target)",
+                "Value #B": "Creation Latency (30s target)",
+                "Value #C": "Health Check Latency (1s target)",
+                "Value #D": "Error Rate (1% target)"
+              }
+            }
+          }
+        ],
+        "type": "table"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Error budget remaining for each SLO - shows how much reliability we can lose before breaching SLO",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "max": 1,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.25
+                },
+                {
+                  "color": "green",
+                  "value": 0.5
+                }
+              ]
+            },
+            "unit": "percentunit"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 1
+        },
+        "id": 3,
+        "options": {
+          "displayMode": "gradient",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showUnfilled": true
+        },
+        "pluginVersion": "9.0.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "1 - ((0.995 - (sum(rate(roost_keeper_health_check_success_total[30d])) / sum(rate(roost_keeper_health_check_total[30d])))) / (1 - 0.995))",
+            "interval": "",
+            "legendFormat": "Availability Error Budget",
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus", 
+              "uid": "${datasource}"
+            },
+            "expr": "1 - (((sum(rate(roost_keeper_helm_install_duration_seconds_sum[7d])) / sum(rate(roost_keeper_helm_install_duration_seconds_count[7d]))) - 30) / (60 - 30))",
+            "interval": "",
+            "legendFormat": "Creation Latency Error Budget",
+            "refId": "B"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "1 - (((sum(rate(roost_keeper_health_check_duration_seconds_sum[7d])) / sum(rate(roost_keeper_health_check_duration_seconds_count[7d]))) - 1) / (5 - 1))",
+            "interval": "",
+            "legendFormat": "Health Check Latency Error Budget",
+            "refId": "C"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "1 - ((sum(rate(roost_keeper_reconcile_errors_total[7d])) / sum(rate(roost_keeper_reconcile_total[7d])) - 0.01) / (0.05 - 0.01))",
+            "interval": "",
+            "legendFormat": "Error Rate Error Budget",
+            "refId": "D"
+          }
+        ],
+        "title": "💰 Error Budget Remaining",
+        "type": "bargauge"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 9
+        },
+        "id": 4,
+        "panels": [],
+        "title": "🔥 Burn Rate Analysis",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Error budget burn rate - how fast we're consuming our error budget. Fast burn = immediate attention needed",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 5
+                }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 10
+        },
+        "id": 5,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "9.0.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "(1 - (sum(rate(roost_keeper_health_check_success_total[1h])) / sum(rate(roost_keeper_health_check_total[1h])))) / (1 - 0.995) * 720",
+            "interval": "",
+            "legendFormat": "Availability Burn Rate (1h)",
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "(1 - (sum(rate(roost_keeper_health_check_success_total[6h])) / sum(rate(roost_keeper_health_check_total[6h])))) / (1 - 0.995) * 120",
+            "interval": "",
+            "legendFormat": "Availability Burn Rate (6h)",
+            "refId": "B"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "(sum(rate(roost_keeper_reconcile_errors_total[1h])) / sum(rate(roost_keeper_reconcile_total[1h]))) / 0.01 * 168",
+            "interval": "",
+            "legendFormat": "Error Rate Burn Rate (1h)",
+            "refId": "C"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "(sum(rate(roost_keeper_reconcile_errors_total[6h])) / sum(rate(roost_keeper_reconcile_total[6h]))) / 0.01 * 28",
+            "interval": "",
+            "legendFormat": "Error Rate Burn Rate (6h)",
+            "refId": "D"
+          }
+        ],
+        "title": "🔥 Error Budget Burn Rate",
+        "type": "timeseries"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 18
+        },
+        "id": 6,
+        "panels": [],
+        "title": "📈 SLI Trends",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Availability trend over time - target is 99.5%",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.99
+                  }
+                ]
+              }
+            },
+            "mappings": [],
+            "max": 1,
+            "min": 0.98,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 0.99
+                }
+              ]
+            },
+            "unit": "percentunit"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "SLO Target"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "red",
+                    "mode": "fixed"
+                  }
+                },
+                {
+                  "id": "custom.lineStyle",
+                  "value": {
+                    "dash": [
+                      10,
+                      10
+                    ],
+                    "fill": "dash"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 19
+        },
+        "id": 7,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "9.0.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "sum(rate(roost_keeper_health_check_success_total[30m])) / sum(rate(roost_keeper_health_check_total[30m]))",
+            "interval": "",
+            "legendFormat": "Current Availability",
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "0.995 + 0*time()",
+            "interval": "",
+            "legendFormat": "SLO Target (99.5%)",
+            "refId": "B"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "0.99 + 0*time()",
+            "interval": "",
+            "legendFormat": "Alert Threshold (99%)",
+            "refId": "C"
+          }
+        ],
+        "title": "📊 Availability SLI Trend",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "P95 latency trends for key operations - shows performance degradation",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 30
+                  }
+                ]
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 30
+                }
+              ]
+            },
+            "unit": "s"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 19
+        },
+        "id": 8,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "9.0.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "histogram_quantile(0.95, sum(rate(roost_keeper_helm_install_duration_seconds_bucket[5m])) by (le))",
+            "interval": "",
+            "legendFormat": "Roost Creation P95",
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "histogram_quantile(0.95, sum(rate(roost_keeper_health_check_duration_seconds_bucket[5m])) by (le))",
+            "interval": "",
+            "legendFormat": "Health Check P95",
+            "refId": "B"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "histogram_quantile(0.95, sum(rate(roost_keeper_reconcile_duration_seconds_bucket[5m])) by (le))",
+            "interval": "",
+            "legendFormat": "Reconcile P95",
+            "refId": "C"
+          }
+        ],
+        "title": "⏱️ Latency SLI Trends (P95)",
+        "type": "timeseries"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 27
+        },
+        "id": 9,
+        "panels": [],
+        "title": "⚠️ SLO Alerting Status",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Current alerting status for all SLO breaches - shows active and resolved alerts",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "align": "auto",
+              "displayMode": "color-background",
+              "inspect": false
+            },
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "color": "green",
+                    "index": 0,
+                    "text": "✅ OK"
+                  },
+                  "1": {
+                    "color": "red",
+                    "index": 1,
+                    "text": "🚨 FIRING"
+                  }
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 1
+                }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 28
+        },
+        "id": 10,
+        "options": {
+          "showHeader": true,
+          "sortBy": [
+            {
+              "desc": true,
+              "displayName": "Status"
+            }
+          ]
+        },
+        "pluginVersion": "9.0.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "ALERTS{alertname=~\".*SLO.*\"}",
+            "format": "table",
+            "instant": true,
+            "interval": "",
+            "legendFormat": "",
+            "refId": "A"
+          }
+        ],
+        "title": "🚨 Active SLO Alerts",
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "__name__": true,
+                "job": true,
+                "instance": true
+              },
+              "indexByName": {},
+              "includeByName": {},
+              "renameByName": {
+                "Value": "Status",
+                "alertname": "Alert Name",
+                "severity": "Severity",
+                "slo": "SLO Type"
+              }
+            }
+          }
+        ],
+        "type": "table"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Time until error budget exhaustion at current burn rate - early warning system",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 24
+                },
+                {
+                  "color": "green",
+                  "value": 168
+                }
+              ]
+            },
+            "unit": "h"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 28
+        },
+        "id": 11,
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "text": {},
+          "textMode": "auto"
+        },
+        "pluginVersion": "9.0.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "720 / ((1 - (sum(rate(roost_keeper_health_check_success_total[1h])) / sum(rate(roost_keeper_health_check_total[1h])))) / (1 - 0.995) * 720)",
+            "interval": "",
+            "legendFormat": "Availability Budget Exhaustion",
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "expr": "168 / ((sum(rate(roost_keeper_reconcile_errors_total[1h])) / sum(rate(roost_keeper_reconcile_total[1h]))) / 0.01 * 168)",
+            "interval": "",
+            "legendFormat": "Error Rate Budget Exhaustion",
+            "refId": "B"
+          }
+        ],
+        "title": "⏰ Time to Error Budget Exhaustion",
+        "type": "stat"
+      }
+    ],
+    "refresh": "30s",
+    "revision": 1,
+    "schemaVersion": 36,
+    "style": "dark",
+    "tags": [
+      "roost-keeper",
+      "sli",
+      "slo",
+      "reliability"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": false,
+            "text": "Prometheus",
+            "value": "Prometheus"
+          },
+          "description": "Prometheus data source",
+          "error": null,
+          "hide": 0,
+          "includeAll": false,
+          "label": "Data Source",
+          "multi": false,
+          "name": "datasource",
+          "options": [],
+          "query": "prometheus",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "type": "datasource"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "Roost-Keeper - SLI/SLO Tracking",
+    "uid": "roost-keeper-sli-slo",
+    "version": 1,
+    "weekStart": ""
+  }
+}
