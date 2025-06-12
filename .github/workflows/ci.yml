@@ -47,7 +47,7 @@ jobs:
       run: make test-unit
 
     - name: Upload unit test coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         file: ./coverage-unit.out
         flags: unit
@@ -97,7 +97,7 @@ jobs:
       run: make test-integration
 
     - name: Upload integration test coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         file: ./coverage-integration.out
         flags: integration
@@ -286,7 +286,7 @@ jobs:
         echo "Coverage check passed!"
 
     - name: Upload final coverage report
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         file: ./cover.out
         flags: combined
